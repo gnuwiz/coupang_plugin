@@ -19,13 +19,10 @@ define('COUPANG_PLUGIN_ACTIVE', true);
 define('COUPANG_PLUGIN_VERSION', '2.0.0');
 define('COUPANG_PLUGIN_PATH', G5_PLUGIN_PATH . '/gnuwiz_coupang');
 
-// 설정 및 클래스 파일 로드
-if (file_exists(COUPANG_PLUGIN_PATH . '/lib/coupang_config.php')) {
-    include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_config.php');
-    include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_api_class.php');
-    include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_functions.php');
+// 플러그인 공통 초기화 로드
+if (file_exists(COUPANG_PLUGIN_PATH . '/_common.php')) {
+    include_once(COUPANG_PLUGIN_PATH . '/_common.php');
 } else {
-    // 설정 파일이 없으면 비활성화
     define('COUPANG_PLUGIN_ACTIVE', false);
     return;
 }
@@ -34,12 +31,13 @@ if (file_exists(COUPANG_PLUGIN_PATH . '/lib/coupang_config.php')) {
 if (COUPANG_PLUGIN_ACTIVE) {
     global $coupang_api;
     try {
-        $coupang_api = get_coupang_api();
+        $coupang_api = new CoupangAPI(array(
+            'access_key' => COUPANG_ACCESS_KEY,
+            'secret_key' => COUPANG_SECRET_KEY,
+            'vendor_id'  => COUPANG_VENDOR_ID
+        ));
     } catch (Exception $e) {
-        // API 생성 실패시 로그만 기록
-        if (function_exists('coupang_log')) {
-            coupang_log('ERROR', 'API 인스턴스 생성 실패', array('error' => $e->getMessage()));
-        }
+        CoupangAPI::log('ERROR', 'API 인스턴스 생성 실패', array('error' => $e->getMessage(), 'log_file' => 'general.log'));
         $coupang_api = null;
     }
 }

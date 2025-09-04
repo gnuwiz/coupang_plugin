@@ -5,7 +5,7 @@
  * 용도: 관리자가 수동으로 동기화를 실행하고 현황을 모니터링
  */
 
-include_once('../../../common.php');
+include_once('../_common.php');
 
 // 관리자 권한 체크
 if (!$is_admin) {
@@ -25,7 +25,11 @@ if ($action && isset($_GET['ajax'])) {
             throw new Exception('API 설정 오류: ' . implode(', ', $config_check['errors']));
         }
         
-        $coupang_api = get_coupang_api();
+        $coupang_api = new CoupangAPI(array(
+            'access_key' => COUPANG_ACCESS_KEY,
+            'secret_key' => COUPANG_SECRET_KEY,
+            'vendor_id'  => COUPANG_VENDOR_ID
+        ));
         $result = array('success' => false, 'message' => '', 'stats' => array());
         
         switch ($action) {
@@ -65,9 +69,10 @@ if ($action && isset($_GET['ajax'])) {
                 break;
                 
             case 'sync_product_status':
-                $success = cron_sync_product_status_to_coupang();
-                $result['success'] = $success;
-                $result['message'] = $success ? '상품 상태 동기화 성공' : '상품 상태 동기화 실패';
+                $sync_result = $coupang_api->syncProductStatusToCoupang();
+                $result['success'] = $sync_result['success'];
+                $result['message'] = $sync_result['success'] ? '상품 상태 동기화 성공' : $sync_result['message'];
+                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
                 break;
                 
             case 'test_api':

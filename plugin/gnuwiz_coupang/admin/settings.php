@@ -5,7 +5,7 @@
  * 용도: 카테고리 매핑, API 설정 등을 관리
  */
 
-include_once('../../../common.php');
+include_once('../_common.php');
 
 // 관리자 권한 체크
 if (!$is_admin) {

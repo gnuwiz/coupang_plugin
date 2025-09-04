@@ -20,11 +20,155 @@ class CoupangAPI {
         $this->base_url   = 'https://api-gateway.coupang.com';
     }
 
+    public static function log($level, $message, $context = array()) {
+        $log_levels = array('DEBUG' => 0, 'INFO' => 1, 'WARNING' => 2, 'ERROR' => 3);
+
+        if (!isset($log_levels[$level]) || !isset($log_levels[COUPANG_LOG_LEVEL])) {
+            return;
+        }
+
+        if ($log_levels[$level] < $log_levels[COUPANG_LOG_LEVEL]) {
+            return;
+        }
+
+        $log_dir = COUPANG_PLUGIN_PATH . '/logs';
+        if (!is_dir($log_dir)) {
+            @mkdir($log_dir, 0755, true);
+        }
+
+        $log_file = isset($context['log_file']) ? $context['log_file'] : 'general.log';
+        unset($context['log_file']);
+
+        $log_message = '[' . date('Y-m-d H:i:s') . '] [' . $level . '] ' . $message;
+        if (!empty($context)) {
+            $log_message .= ' Context: ' . json_encode($context, JSON_UNESCAPED_UNICODE);
+        }
+
+        file_put_contents($log_dir . '/' . $log_file, $log_message . PHP_EOL, FILE_APPEND);
+    }
+
+    public static function monitorCronExecution($cron_type, $status, $message = '', $execution_duration = null) {
+        global $g5;
+        $sql = "INSERT INTO " . G5_TABLE_PREFIX . "coupang_cron_log SET"
+             . " cron_type = '" . addslashes($cron_type) . "',"
+             . " status = '" . addslashes($status) . "',"
+             . " message = '" . addslashes($message) . "'";
+        if ($execution_duration !== null) {
+            $sql .= ", execution_duration = " . (float)$execution_duration;
+        }
+        return sql_query($sql);
+    }
+
+    public static function runCron($sync_type) {
+        $start_time = microtime(true);
+        $log_prefix = '[' . date('Y-m-d H:i:s') . '] ' . strtoupper($sync_type) . ': ';
+
+        try {
+            echo $log_prefix . "시작\n";
+
+            $config_check = validate_coupang_config();
+            if (!$config_check['valid']) {
+                throw new Exception('API 설정 오류: ' . implode(', ', $config_check['errors']));
+            }
+
+            self::monitorCronExecution($sync_type, 'start', '동기화 시작');
+
+            $coupang_api = new self(array(
+                'access_key' => COUPANG_ACCESS_KEY,
+                'secret_key' => COUPANG_SECRET_KEY,
+                'vendor_id'  => COUPANG_VENDOR_ID
+            ));
+            $result = array('success' => false, 'stats' => array());
+
+            switch ($sync_type) {
+                case 'orders':
+                    echo $log_prefix . "주문 동기화 실행\n";
+                    $result = $coupang_api->syncOrdersFromCoupang(1);
+                    break;
+                case 'cancelled_orders':
+                    echo $log_prefix . "취소 주문 동기화 실행\n";
+                    $result = $coupang_api->syncCancelledOrdersFromCoupang(1);
+                    break;
+                case 'order_status':
+                    echo $log_prefix . "주문 상태 동기화 실행\n";
+                    $result = $coupang_api->syncOrderStatusToCoupang();
+                    break;
+                case 'products':
+                    echo $log_prefix . "상품 동기화 실행\n";
+                    $result = $coupang_api->syncProductsToCoupang();
+                    break;
+                case 'product_status':
+                    echo $log_prefix . "상품 상태 동기화 실행\n";
+                    $result = $coupang_api->syncProductStatusToCoupang();
+                    break;
+                case 'stock':
+                    echo $log_prefix . "재고/가격 동기화 실행\n";
+                    $result = $coupang_api->syncStockAndPrice();
+                    break;
+                default:
+                    throw new Exception('알 수 없는 동기화 타입: ' . $sync_type);
+            }
+
+            $end_time = microtime(true);
+            $execution_time = round(($end_time - $start_time), 2);
+
+            if ($result['success']) {
+                $stats = isset($result['stats']) ? $result['stats'] : array();
+                $stats['execution_time'] = $execution_time;
+
+                $summary = "완료";
+                if (isset($stats['total'])) $summary .= " - 전체:{$stats['total']}";
+                if (isset($stats['success'])) $summary .= ", 성공:{$stats['success']}";
+                if (isset($stats['new'])) $summary .= ", 신규:{$stats['new']}";
+                if (isset($stats['update'])) $summary .= ", 업데이트:{$stats['update']}";
+                if (isset($stats['skip'])) $summary .= ", 스킵:{$stats['skip']}";
+                if (isset($stats['error'])) $summary .= ", 실패:{$stats['error']}";
+                if (isset($stats['stock_success'])) $summary .= ", 재고성공:{$stats['stock_success']}";
+                if (isset($stats['price_success'])) $summary .= ", 가격성공:{$stats['price_success']}";
+                $summary .= ", 실행시간:{$execution_time}초";
+
+                echo $log_prefix . $summary . "\n";
+                self::monitorCronExecution($sync_type, 'success', $summary, $execution_time);
+                return 0;
+            } else {
+                $error_msg = isset($result['message']) ? $result['message'] : '알 수 없는 오류';
+                throw new Exception($error_msg);
+            }
+
+        } catch (Exception $e) {
+            $end_time = microtime(true);
+            $execution_time = round(($end_time - $start_time), 2);
+            $error_msg = "오류: " . $e->getMessage() . " (실행시간: {$execution_time}초)";
+            echo $log_prefix . $error_msg . "\n";
+            self::log('ERROR', $sync_type . ' 동기화 오류', array(
+                'error' => $e->getMessage(),
+                'execution_time' => $execution_time,
+                'log_file' => 'general.log'
+            ));
+            self::monitorCronExecution($sync_type, 'error', $error_msg, $execution_time);
+            return 1;
+        }
+    }
+
+    private function getDeliveryCode($company_name) {
+        global $COUPANG_DELIVERY_COMPANIES;
+        $company_name = trim($company_name);
+        if (isset($COUPANG_DELIVERY_COMPANIES[$company_name])) {
+            return $COUPANG_DELIVERY_COMPANIES[$company_name];
+        }
+        foreach ($COUPANG_DELIVERY_COMPANIES as $name => $code) {
+            if (strpos($company_name, $name) !== false || strpos($name, $company_name) !== false) {
+                return $code;
+            }
+        }
+        return 'ETC';
+    }
+
     /**
      * API 요청 헤더 생성 (HMAC)
      */
     private function generateHeaders($method, $path, $query = '') {
-        $datetime = gmdate('ymd\THis\Z');
+        $datetime = gmdate('Y-m-d\TH:i:s\Z');
         $message  = $datetime . $method . $path . $query;
         $signature = base64_encode(hash_hmac('sha256', $message, $this->secret_key, true));
         return array(
@@ -48,7 +192,8 @@ class CoupangAPI {
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_CUSTOMREQUEST  => $method,
-            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_TIMEOUT        => COUPANG_TIMEOUT
         ));
         
@@ -62,10 +207,18 @@ class CoupangAPI {
         curl_close($ch);
 
         if ($error) {
-            coupang_log('ERROR', 'HTTP 요청 오류: ' . $error);
+            self::log('ERROR', 'HTTP 요청 오류: ' . $error, array('log_file' => 'general.log'));
             return array('success' => false, 'error' => $error);
         }
         
+        if ($http_code >= 400) {
+            self::log('ERROR', 'HTTP 오류 응답', array(
+                'http_code' => $http_code,
+                'response'  => $response,
+                'log_file'  => 'general.log'
+            ));
+        }
+
         $result = json_decode($response, true);
         return array(
             'success'   => ($http_code >= 200 && $http_code < 300),
@@ -109,7 +262,7 @@ class CoupangAPI {
         $endpoint = '/v2/providers/' . $this->vendor_id . '/vendor/orders/' . $vendor_order_id . '/dispatch';
         $data = array('vendorOrderId' => $vendor_order_id);
         if ($tracking_number)  $data['trackingNumber']  = $tracking_number;
-        if ($delivery_company) $data['deliveryCompany'] = get_coupang_delivery_code($delivery_company);
+        if ($delivery_company) $data['deliveryCompany'] = $this->getDeliveryCode($delivery_company);
         
         return $this->makeRequest('POST', $endpoint, $data);
     }
@@ -196,7 +349,7 @@ class CoupangAPI {
             $from_date = date('Y-m-d\TH:i:s\Z', strtotime('-' . $time_range_hours . ' hour'));
             $to_date = date('Y-m-d\TH:i:s\Z');
             
-            coupang_log('INFO', '주문 동기화 시작', array('from' => $from_date, 'to' => $to_date));
+            self::log('INFO', '주문 동기화 시작', array('from' => $from_date, 'to' => $to_date, 'log_file' => 'orders.log'));
             
             $result = $this->getOrders($from_date, $to_date);
             
@@ -218,9 +371,10 @@ class CoupangAPI {
                             $stats['skip']++;
                         } else {
                             $stats['error']++;
-                            coupang_log('ERROR', '주문 저장 실패', array(
+                            self::log('ERROR', '주문 저장 실패', array(
                                 'order_id' => $order['vendorOrderId'],
-                                'error' => $save_result['message']
+                                'error' => $save_result['message'],
+                                'log_file' => 'orders.log'
                             ));
                         }
                     }
@@ -229,9 +383,10 @@ class CoupangAPI {
                     
                 } catch (Exception $e) {
                     $stats['error']++;
-                    coupang_log('ERROR', '주문 처리 예외', array(
+                    self::log('ERROR', '주문 처리 예외', array(
                         'order_id' => $order['vendorOrderId'],
-                        'exception' => $e->getMessage()
+                        'exception' => $e->getMessage(),
+                        'log_file' => 'orders.log'
                     ));
                 }
             }
@@ -239,14 +394,15 @@ class CoupangAPI {
             $execution_time = round((microtime(true) - $start_time), 2);
             $stats['execution_time'] = $execution_time;
             
-            coupang_log('INFO', '주문 동기화 완료', $stats);
+            self::log('INFO', '주문 동기화 완료', array_merge($stats, array('log_file' => 'orders.log')));
             return array('success' => true, 'stats' => $stats);
             
         } catch (Exception $e) {
             $execution_time = round((microtime(true) - $start_time), 2);
-            coupang_log('ERROR', '주문 동기화 오류', array(
+            self::log('ERROR', '주문 동기화 오류', array(
                 'error' => $e->getMessage(),
-                'execution_time' => $execution_time
+                'execution_time' => $execution_time,
+                'log_file' => 'orders.log'
             ));
             return array('success' => false, 'message' => $e->getMessage());
         }
@@ -262,7 +418,7 @@ class CoupangAPI {
             $from_date = date('Y-m-d\TH:i:s\Z', strtotime('-' . $time_range_hours . ' hour'));
             $to_date = date('Y-m-d\TH:i:s\Z');
             
-            coupang_log('INFO', '취소 주문 동기화 시작');
+            self::log('INFO', '취소 주문 동기화 시작', array('log_file' => 'cancelled.log'));
             
             $result = $this->getCancelledOrders($from_date, $to_date);
             
@@ -302,9 +458,10 @@ class CoupangAPI {
                     
                 } catch (Exception $e) {
                     $stats['error']++;
-                    coupang_log('ERROR', '취소 주문 처리 예외', array(
+                    self::log('ERROR', '취소 주문 처리 예외', array(
                         'order_id' => $vendor_order_id,
-                        'exception' => $e->getMessage()
+                        'exception' => $e->getMessage(),
+                        'log_file' => 'cancelled.log'
                     ));
                 }
             }
@@ -312,14 +469,15 @@ class CoupangAPI {
             $execution_time = round((microtime(true) - $start_time), 2);
             $stats['execution_time'] = $execution_time;
             
-            coupang_log('INFO', '취소 주문 동기화 완료', $stats);
+            self::log('INFO', '취소 주문 동기화 완료', array_merge($stats, array('log_file' => 'cancelled.log')));
             return array('success' => true, 'stats' => $stats);
             
         } catch (Exception $e) {
             $execution_time = round((microtime(true) - $start_time), 2);
-            coupang_log('ERROR', '취소 주문 동기화 오류', array(
+            self::log('ERROR', '취소 주문 동기화 오류', array(
                 'error' => $e->getMessage(),
-                'execution_time' => $execution_time
+                'execution_time' => $execution_time,
+                'log_file' => 'cancelled.log'
             ));
             return array('success' => false, 'message' => $e->getMessage());
         }
@@ -390,9 +548,10 @@ class CoupangAPI {
                     
                 } catch (Exception $e) {
                     $stats['error']++;
-                    coupang_log('ERROR', '상품 동기화 예외', array(
+                    self::log('ERROR', '상품 동기화 예외', array(
                         'it_id' => $row['it_id'],
-                        'exception' => $e->getMessage()
+                        'exception' => $e->getMessage(),
+                        'log_file' => 'products.log'
                     ));
                 }
             }
@@ -400,17 +559,92 @@ class CoupangAPI {
             $execution_time = round((microtime(true) - $start_time), 2);
             $stats['execution_time'] = $execution_time;
             
-            coupang_log('INFO', '상품 동기화 완료', $stats);
+            self::log('INFO', '상품 동기화 완료', array_merge($stats, array('log_file' => 'products.log')));
             return array('success' => true, 'stats' => $stats);
             
         } catch (Exception $e) {
             $execution_time = round((microtime(true) - $start_time), 2);
-            coupang_log('ERROR', '상품 동기화 오류', array(
+            self::log('ERROR', '상품 동기화 오류', array(
                 'error' => $e->getMessage(),
-                'execution_time' => $execution_time
+                'execution_time' => $execution_time,
+                'log_file' => 'products.log'
             ));
             return array('success' => false, 'message' => $e->getMessage());
         }
+    }
+
+    public function syncProductStatusToCoupang() {
+        global $g5;
+        $start_time = microtime(true);
+        $sql = "SELECT i.it_id, i.it_use, i.it_soldout, i.it_update_time,"
+             . " m.coupang_item_id, m.sync_status"
+             . " FROM {$g5['g5_shop_item_table']} i"
+             . " INNER JOIN " . G5_TABLE_PREFIX . "coupang_item_map m ON i.it_id = m.youngcart_it_id"
+             . " WHERE ((i.it_use = '0' AND m.sync_status = 'active')"
+             . " OR (i.it_soldout = '1' AND m.sync_status = 'active')"
+             . " OR (i.it_use = '1' AND i.it_soldout = '0' AND m.sync_status = 'inactive'))"
+             . " AND i.it_update_time > m.last_sync_date"
+             . " ORDER BY i.it_update_time DESC"
+             . " LIMIT " . COUPANG_PRODUCT_BATCH_SIZE;
+
+        $result = sql_query($sql);
+        $sync_count = 0;
+        $error_count = 0;
+
+        while ($row = sql_fetch_array($result)) {
+            try {
+                $sync_result = false;
+                $new_status = '';
+
+                if ($row['it_use'] == '0' || $row['it_soldout'] == '1') {
+                    $sync_result = $this->stopSelling($row['coupang_item_id']);
+                    $new_status = 'inactive';
+                } else if ($row['it_use'] == '1' && $row['it_soldout'] == '0') {
+                    $sync_result = $this->startSelling($row['coupang_item_id']);
+                    $new_status = 'active';
+                }
+
+                if ($sync_result && $sync_result['success']) {
+                    $sync_count++;
+                    $update_sql = "UPDATE " . G5_TABLE_PREFIX . "coupang_item_map"
+                                . " SET sync_status = '{$new_status}',"
+                                . "     last_sync_date = NOW(),"
+                                . "     error_message = NULL"
+                                . " WHERE youngcart_it_id = '" . addslashes($row['it_id']) . "'";
+                    sql_query($update_sql);
+                } else {
+                    $error_count++;
+                    $error_message = isset($sync_result['message']) ? $sync_result['message'] : '알 수 없는 오류';
+                    $update_sql = "UPDATE " . G5_TABLE_PREFIX . "coupang_item_map"
+                                . " SET error_message = '" . addslashes($error_message) . "',"
+                                . "     last_sync_date = NOW()"
+                                . " WHERE youngcart_it_id = '" . addslashes($row['it_id']) . "'";
+                    sql_query($update_sql);
+                }
+
+                if (COUPANG_API_DELAY > 0) sleep(COUPANG_API_DELAY);
+            } catch (Exception $e) {
+                $error_count++;
+                self::log('ERROR', '상품 상태 동기화 예외', array(
+                    'it_id' => $row['it_id'],
+                    'exception' => $e->getMessage(),
+                    'log_file' => 'product_status.log'
+                ));
+            }
+        }
+
+        $execution_time = round((microtime(true) - $start_time), 2);
+        self::log('INFO', '상품 상태 동기화 완료', array(
+            'success' => $sync_count,
+            'error' => $error_count,
+            'execution_time' => $execution_time,
+            'log_file' => 'product_status.log'
+        ));
+
+        return array(
+            'success' => ($sync_count > 0 || $error_count == 0),
+            'stats' => array('success' => $sync_count, 'error' => $error_count)
+        );
     }
 
     /**
@@ -475,9 +709,10 @@ class CoupangAPI {
                     
                 } catch (Exception $e) {
                     $stats['error']++;
-                    coupang_log('ERROR', '재고/가격 동기화 예외', array(
+                    self::log('ERROR', '재고/가격 동기화 예외', array(
                         'it_id' => $row['it_id'],
-                        'exception' => $e->getMessage()
+                        'exception' => $e->getMessage(),
+                        'log_file' => 'stock.log'
                     ));
                 }
             }
@@ -485,14 +720,15 @@ class CoupangAPI {
             $execution_time = round((microtime(true) - $start_time), 2);
             $stats['execution_time'] = $execution_time;
             
-            coupang_log('INFO', '재고/가격 동기화 완료', $stats);
+            self::log('INFO', '재고/가격 동기화 완료', array_merge($stats, array('log_file' => 'stock.log')));
             return array('success' => true, 'stats' => $stats);
             
         } catch (Exception $e) {
             $execution_time = round((microtime(true) - $start_time), 2);
-            coupang_log('ERROR', '재고/가격 동기화 오류', array(
+            self::log('ERROR', '재고/가격 동기화 오류', array(
                 'error' => $e->getMessage(),
-                'execution_time' => $execution_time
+                'execution_time' => $execution_time,
+                'log_file' => 'stock.log'
             ));
             return array('success' => false, 'message' => $e->getMessage());
         }
@@ -545,9 +781,10 @@ class CoupangAPI {
                     
                 } catch (Exception $e) {
                     $stats['error']++;
-                    coupang_log('ERROR', '주문 상태 동기화 예외', array(
+                    self::log('ERROR', '주문 상태 동기화 예외', array(
                         'order_id' => $row['od_id'],
-                        'exception' => $e->getMessage()
+                        'exception' => $e->getMessage(),
+                        'log_file' => 'status.log'
                     ));
                 }
             }
@@ -555,14 +792,15 @@ class CoupangAPI {
             $execution_time = round((microtime(true) - $start_time), 2);
             $stats['execution_time'] = $execution_time;
             
-            coupang_log('INFO', '주문 상태 동기화 완료', $stats);
+            self::log('INFO', '주문 상태 동기화 완료', array_merge($stats, array('log_file' => 'status.log')));
             return array('success' => true, 'stats' => $stats);
             
         } catch (Exception $e) {
             $execution_time = round((microtime(true) - $start_time), 2);
-            coupang_log('ERROR', '주문 상태 동기화 오류', array(
+            self::log('ERROR', '주문 상태 동기화 오류', array(
                 'error' => $e->getMessage(),
-                'execution_time' => $execution_time
+                'execution_time' => $execution_time,
+                'log_file' => 'status.log'
             ));
             return array('success' => false, 'message' => $e->getMessage());
         }
@@ -774,9 +1012,10 @@ class CoupangAPI {
         $cart_result = sql_query($cart_sql);
 
         if (!$cart_result) {
-            coupang_log('ERROR', 'Cart 저장 실패', array(
+            self::log('ERROR', 'Cart 저장 실패', array(
                 'error' => sql_error(),
-                'item_id' => $item['vendorItemId']
+                'item_id' => $item['vendorItemId'],
+                'log_file' => 'orders.log'
             ));
         } else {
             // 재고 차감
@@ -837,7 +1076,7 @@ class CoupangAPI {
             switch ($order_row['od_status']) {
                 case '배송':
                     if (!empty($order_row['od_invoice'])) {
-                        $delivery_company_code = get_coupang_delivery_code($order_row['od_delivery_company']);
+                        $delivery_company_code = $this->getDeliveryCode($order_row['od_delivery_company']);
                         $result = $this->dispatchOrder($od_id, $order_row['od_invoice'], $delivery_company_code);
                         $action_type = 'dispatch';
 
@@ -883,9 +1122,10 @@ class CoupangAPI {
             }
 
         } catch (Exception $e) {
-            coupang_log('ERROR', '주문 상태 업데이트 예외', array(
+            self::log('ERROR', '주문 상태 업데이트 예외', array(
                 'order_id' => $od_id,
-                'exception' => $e->getMessage()
+                'exception' => $e->getMessage(),
+                'log_file' => 'status.log'
             ));
         }
 
@@ -1154,179 +1394,3 @@ class CoupangAPI {
     }
 }
 
-// ===================== 전역 헬퍼 함수들 =====================
-
-/**
- * Coupang API 인스턴스 생성
- */
-function get_coupang_api() {
-    $config = array(
-        'access_key' => COUPANG_ACCESS_KEY,
-        'secret_key' => COUPANG_SECRET_KEY,
-        'vendor_id'  => COUPANG_VENDOR_ID
-    );
-    return new CoupangAPI($config);
-}
-
-/**
- * 크론 실행 상태 기록
- */
-function monitor_cron_execution($cron_type, $status, $message = '', $execution_duration = null) {
-    global $g5;
-    $sql = "INSERT INTO " . G5_TABLE_PREFIX . "coupang_cron_log SET 
-            cron_type = '" . addslashes($cron_type) . "',
-            status = '" . addslashes($status) . "',
-            message = '" . addslashes($message) . "'";
-    
-    if ($execution_duration !== null) {
-        $sql .= ", execution_duration = " . (float)$execution_duration;
-    }
-    
-    return sql_query($sql);
-}
-
-// ===================== 래퍼 함수들 (하위 호환성) =====================
-
-/**
- * 주문 동기화 래퍼 함수
- */
-function cron_sync_coupang_orders() {
-    $coupang_api = get_coupang_api();
-    $result = $coupang_api->syncOrdersFromCoupang();
-    return $result['success'];
-}
-
-/**
- * 취소 주문 동기화 래퍼 함수
- */
-function cron_sync_coupang_cancelled_orders() {
-    $coupang_api = get_coupang_api();
-    $result = $coupang_api->syncCancelledOrdersFromCoupang();
-    return $result['success'];
-}
-
-/**
- * 상품 동기화 래퍼 함수
- */
-function cron_sync_products_to_coupang() {
-    $coupang_api = get_coupang_api();
-    $result = $coupang_api->syncProductsToCoupang();
-    return $result['success'];
-}
-
-/**
- * 재고/가격 동기화 래퍼 함수
- */
-function cron_sync_stock_to_coupang() {
-    $coupang_api = get_coupang_api();
-    $result = $coupang_api->syncStockAndPrice();
-    return $result['success'];
-}
-
-/**
- * 주문 상태 동기화 래퍼 함수
- */
-function cron_sync_order_status_to_coupang() {
-    $coupang_api = get_coupang_api();
-    $result = $coupang_api->syncOrderStatusToCoupang();
-    return $result['success'];
-}
-
-/**
- * 상품 상태 동기화 래퍼 함수
- */
-function cron_sync_product_status_to_coupang() {
-    global $g5;
-    
-    $start_time = microtime(true);
-    $coupang_api = get_coupang_api();
-    
-    // 상태 변경이 필요한 상품들 조회
-    $sql = "SELECT i.it_id, i.it_use, i.it_soldout, i.it_update_time, 
-                   m.coupang_item_id, m.sync_status
-            FROM {$g5['g5_shop_item_table']} i
-            INNER JOIN " . G5_TABLE_PREFIX . "coupang_item_map m ON i.it_id = m.youngcart_it_id
-            WHERE (
-                (i.it_use = '0' AND m.sync_status = 'active') OR
-                (i.it_soldout = '1' AND m.sync_status = 'active') OR
-                (i.it_use = '1' AND i.it_soldout = '0' AND m.sync_status = 'inactive')
-            )
-            AND i.it_update_time > m.last_sync_date
-            ORDER BY i.it_update_time DESC
-            LIMIT " . COUPANG_PRODUCT_BATCH_SIZE;
-    
-    $result = sql_query($sql);
-    $sync_count = 0;
-    $error_count = 0;
-    
-    while ($row = sql_fetch_array($result)) {
-        try {
-            $sync_result = false;
-            $new_status = '';
-            
-            if ($row['it_use'] == '0' || $row['it_soldout'] == '1') {
-                // 판매 중단
-                $sync_result = $coupang_api->stopSelling($row['coupang_item_id']);
-                $new_status = 'inactive';
-            } else if ($row['it_use'] == '1' && $row['it_soldout'] == '0') {
-                // 판매 재개
-                $sync_result = $coupang_api->startSelling($row['coupang_item_id']);
-                $new_status = 'active';
-            }
-            
-            if ($sync_result && $sync_result['success']) {
-                $sync_count++;
-                $update_sql = "UPDATE " . G5_TABLE_PREFIX . "coupang_item_map 
-                              SET sync_status = '{$new_status}', 
-                                  last_sync_date = NOW(),
-                                  error_message = NULL
-                              WHERE youngcart_it_id = '" . addslashes($row['it_id']) . "'";
-                sql_query($update_sql);
-            } else {
-                $error_count++;
-                $error_message = isset($sync_result['message']) ? $sync_result['message'] : '알 수 없는 오류';
-                $update_sql = "UPDATE " . G5_TABLE_PREFIX . "coupang_item_map 
-                              SET error_message = '" . addslashes($error_message) . "',
-                                  last_sync_date = NOW()
-                              WHERE youngcart_it_id = '" . addslashes($row['it_id']) . "'";
-                sql_query($update_sql);
-            }
-            
-            if (COUPANG_API_DELAY > 0) sleep(COUPANG_API_DELAY);
-            
-        } catch (Exception $e) {
-            $error_count++;
-            coupang_log('ERROR', '상품 상태 동기화 예외', array(
-                'it_id' => $row['it_id'],
-                'exception' => $e->getMessage()
-            ));
-        }
-    }
-    
-    $execution_time = round((microtime(true) - $start_time), 2);
-    coupang_log('INFO', '상품 상태 동기화 완료', array(
-        'success' => $sync_count,
-        'error' => $error_count,
-        'execution_time' => $execution_time
-    ));
-    
-    return ($sync_count > 0 || $error_count == 0);
-}
-
-/**
- * 영카트 상품을 쿠팡에 등록 (하위 호환용)
- */
-function sync_product_to_coupang($it_id) {
-    $coupang_api = get_coupang_api();
-    return $coupang_api->createProductFromYoungcart($it_id);
-}
-
-/**
- * 영카트 상품 업데이트를 쿠팡에 반영 (하위 호환용)
- */
-function update_coupang_product_from_youngcart($it_id, $update_fields = array()) {
-    $coupang_api = get_coupang_api();
-    return $coupang_api->updateProductFromYoungcart($it_id, $update_fields);
-}
-
-?>

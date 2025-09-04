@@ -5,7 +5,7 @@
  * 용도: API 키 설정 후 쿠팡 API 연결 상태 및 설정값 검증
  */
 
-include_once('../../../common.php');
+include_once('../_common.php');
 
 // 관리자 권한 체크
 if (!$is_admin) {
@@ -122,10 +122,11 @@ function performAPITests($test_type = 'all') {
         'error' => $error_count
     );
     
-    coupang_log('INFO', 'API 테스트 실행', array(
+    CoupangAPI::log('INFO', 'API 테스트 실행', array(
         'test_type' => $test_type,
         'overall_status' => $results['overall_status'],
-        'execution_time' => $execution_time
+        'execution_time' => $execution_time,
+        'log_file' => 'general.log'
     ));
     
     return $results;
@@ -277,7 +278,11 @@ function testAPIConnection() {
     );
     
     try {
-        $coupang_api = get_coupang_api();
+        $coupang_api = new CoupangAPI(array(
+            'access_key' => COUPANG_ACCESS_KEY,
+            'secret_key' => COUPANG_SECRET_KEY,
+            'vendor_id'  => COUPANG_VENDOR_ID
+        ));
         
         // 간단한 API 호출 테스트 (빈 주문 조회)
         $from_date = date('Y-m-d\TH:i:s\Z', strtotime('-1 day'));
@@ -334,7 +339,11 @@ function testAPIPermissions() {
     );
     
     try {
-        $coupang_api = get_coupang_api();
+        $coupang_api = new CoupangAPI(array(
+            'access_key' => COUPANG_ACCESS_KEY,
+            'secret_key' => COUPANG_SECRET_KEY,
+            'vendor_id'  => COUPANG_VENDOR_ID
+        ));
         $permissions = array();
 
         // 1. 주문 조회 권한
