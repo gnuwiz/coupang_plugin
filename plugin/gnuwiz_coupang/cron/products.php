@@ -4,13 +4,12 @@
  * 경로: /plugin/coupang/cron/products.php
  */
 
-// 플러그인 경로 설정
+// 플러그인 및 영카트 경로 설정
 define('COUPANG_PLUGIN_PATH', dirname(dirname(__FILE__)));
+define('YOUNGCART_ROOT', dirname(COUPANG_PLUGIN_PATH));
 
-// main_cron.php를 products 타입으로 실행
-$_SERVER['argv'] = array('products.php', 'products');
-$_SERVER['argc'] = 2;
-$argv = $_SERVER['argv'];
+include_once(YOUNGCART_ROOT . '/_common.php');
+include_once(COUPANG_PLUGIN_PATH . '/_common.php');
 
-include_once(COUPANG_PLUGIN_PATH . '/cron/main_cron.php');
+exit(CoupangAPI::runCron('products'));
 ?>

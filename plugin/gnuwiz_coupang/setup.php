@@ -59,6 +59,27 @@ try {
             echo "<span class='success'>✅ 디렉터리 존재: " . basename($dir) . "</span><br>\n";
         }
     }
+
+    // 기본 로그 파일 생성
+    $log_files = array(
+        'orders.log',
+        'cancelled.log',
+        'status.log',
+        'products.log',
+        'product_status.log',
+        'stock.log',
+        'general.log'
+    );
+    foreach ($log_files as $log) {
+        $path = COUPANG_PLUGIN_PATH . '/logs/' . $log;
+        if (!file_exists($path)) {
+            @touch($path);
+            echo "<span class='success'>✅ 로그 파일 생성: {$log}</span><br>\n";
+        } else {
+            echo "<span class='success'>✅ 로그 파일 존재: {$log}</span><br>\n";
+        }
+    }
+
     echo "</div>\n";
 
     // === 2단계: 기존 주문 테이블 필드 추가 ===
@@ -402,10 +423,11 @@ try {
     echo "</div>\n";
 
     // 설치 성공 로그
-    coupang_log('INFO', '쿠팡 플러그인 통합 설치 완료', array(
+    CoupangAPI::log('INFO', '쿠팡 플러그인 통합 설치 완료', array(
         'version' => '2.0.0',
         'install_date' => date('Y-m-d H:i:s'),
-        'install_log' => $install_log
+        'install_log' => $install_log,
+        'log_file' => 'general.log'
     ));
 
 } catch (Exception $e) {
@@ -414,9 +436,10 @@ try {
     echo "<p class='error'>오류 메시지: " . $e->getMessage() . "</p>\n";
     echo "</div>\n";
 
-    coupang_log('ERROR', '쿠팡 플러그인 설치 오류', array(
+    CoupangAPI::log('ERROR', '쿠팡 플러그인 설치 오류', array(
         'error' => $e->getMessage(),
-        'trace' => $e->getTraceAsString()
+        'trace' => $e->getTraceAsString(),
+        'log_file' => 'general.log'
     ));
 }
 
