@@ -498,19 +498,29 @@ try {
     echo "<div class='step'>\n";
     echo "<h2>📁 파일 구조 확인</h2>\n";
 
-    $required_files = array(
+     $required_files = array(
         'lib/coupang_config.php' => '설정 파일',
-        'lib/coupang_api_class.php' => 'API 클래스 (카테고리 추천 포함)',
+        'lib/coupang_api_class.php' => 'API 클래스 (카테고리 추천 + 출고지 관리)',
+        'lib/shipping_helper.php' => '🚚 출고지 관리 헬퍼 함수',
+        
         'cron/main_cron.php' => '통합 크론',
         'cron/orders.php' => '주문 동기화',
         'cron/products.php' => '상품 동기화',
         'cron/stock.php' => '재고 동기화',
+        'cron/shipping_places.php' => '🚚 출고지 동기화',
         'cron/category_recommendations.php' => '🔥 카테고리 추천 크론',
         'cron/category_cache_cleanup.php' => '🔥 카테고리 캐시 정리',
         'cron/manual_category_test.php' => '🔥 수동 카테고리 테스트',
+        'cron/manual_shipping_test.php' => '🚚 수동 출고지 테스트',
+        
         'admin/manual_sync.php' => '관리 페이지',
         'admin/settings.php' => '설정 관리',
-        'admin/category_test.php' => '🔥 카테고리 테스트 페이지'
+        'admin/api_test.php' => 'API 연결 테스트',
+        'admin/category_test.php' => '🔥 카테고리 테스트 페이지',
+        'admin/shipping_places.php' => '🚚 출고지 관리 페이지',
+        'admin/shipping_place_detail.php' => '🚚 출고지 상세보기',
+        'admin/shipping_place_sync.php' => '🚚 출고지 AJAX 동기화',
+        'admin/shipping_place_test.php' => '🚚 출고지 AJAX 테스트'
     );
 
     $missing_files = array();
