@@ -201,6 +201,177 @@ try {
 
     echo "</div>\n";
 
+	// === 출고지/반품지 관리 테이블 생성 ===
+    echo "<div class='step'>\n";
+    echo "<h2>🚚 출고지/반품지 관리 테이블 생성</h2>\n";
+
+    // 출고지/반품지 관리 테이블
+    $shipping_places_table = "
+    CREATE TABLE IF NOT EXISTS `" . G5_TABLE_PREFIX . "coupang_shipping_places` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `shipping_place_code` varchar(50) NOT NULL COMMENT '쿠팡 출고지/반품지 코드',
+      `shipping_place_name` varchar(255) NOT NULL COMMENT '출고지/반품지 명',
+      `address_type` enum('OUTBOUND','RETURN') NOT NULL COMMENT '주소 타입 (OUTBOUND:출고지, RETURN:반품지)',
+      `company_name` varchar(255) DEFAULT NULL COMMENT '회사명',
+      `contact_name` varchar(100) DEFAULT NULL COMMENT '담당자명',
+      `company_phone` varchar(20) DEFAULT NULL COMMENT '회사 전화번호',
+      `phone1` varchar(20) DEFAULT NULL COMMENT '연락처1',
+      `phone2` varchar(20) DEFAULT NULL COMMENT '연락처2',
+      `zipcode` varchar(10) DEFAULT NULL COMMENT '우편번호',
+      `address1` varchar(255) DEFAULT NULL COMMENT '주소1',
+      `address2` varchar(255) DEFAULT NULL COMMENT '주소2',
+      `place_data` text COMMENT '쿠팡 API 원본 데이터 (JSON)',
+      `status` enum('ACTIVE','INACTIVE','DELETED') NOT NULL DEFAULT 'ACTIVE' COMMENT '상태',
+      `is_default_outbound` tinyint(1) NOT NULL DEFAULT 0 COMMENT '기본 출고지 여부',
+      `is_default_return` tinyint(1) NOT NULL DEFAULT 0 COMMENT '기본 반품지 여부',
+      `delivery_companies` text COMMENT '지원 택배사 목록 (JSON)',
+      `notes` text COMMENT '메모',
+      `last_sync_date` datetime DEFAULT NULL COMMENT '마지막 동기화 일시',
+      `created_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
+      `updated_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '수정일시',
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `uk_shipping_place_code` (`shipping_place_code`),
+      KEY `idx_address_type` (`address_type`),
+      KEY `idx_status` (`status`),
+      KEY `idx_is_default` (`is_default_outbound`, `is_default_return`),
+      KEY `idx_last_sync` (`last_sync_date`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='쿠팡 출고지/반품지 관리'";
+
+    if (sql_query($shipping_places_table)) {
+        echo "<span class='success'>✅ 출고지/반품지 관리 테이블 생성 (g5_coupang_shipping_places)</span><br>\n";
+        $install_log[] = "출고지/반품지 관리 테이블 생성";
+    } else {
+        echo "<span class='error'>❌ 출고지/반품지 관리 테이블 생성 실패</span><br>\n";
+        echo "<span class='error'>오류: " . sql_error() . "</span><br>\n";
+    }
+
+    // 출고지/반품지 동기화 로그 테이블
+    $shipping_log_table = "
+    CREATE TABLE IF NOT EXISTS `" . G5_TABLE_PREFIX . "coupang_shipping_log` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `shipping_place_code` varchar(50) DEFAULT NULL COMMENT '출고지/반품지 코드',
+      `action_type` enum('CREATE','UPDATE','DELETE','SYNC') NOT NULL COMMENT '작업 타입',
+      `address_type` enum('OUTBOUND','RETURN') DEFAULT NULL COMMENT '주소 타입',
+      `status` enum('SUCCESS','FAIL','PENDING') NOT NULL COMMENT '처리 상태',
+      `request_data` text COMMENT '요청 데이터 (JSON)',
+      `response_data` text COMMENT '응답 데이터 (JSON)',
+      `error_message` text COMMENT '오류 메시지',
+      `execution_time` decimal(10,3) DEFAULT NULL COMMENT '실행 시간 (초)',
+      `user_id` varchar(50) DEFAULT NULL COMMENT '실행 사용자 ID',
+      `ip_address` varchar(45) DEFAULT NULL COMMENT 'IP 주소',
+      `created_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
+      PRIMARY KEY (`id`),
+      KEY `idx_shipping_place_code` (`shipping_place_code`),
+      KEY `idx_action_type` (`action_type`),
+      KEY `idx_status` (`status`),
+      KEY `idx_created_date` (`created_date`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='쿠팡 출고지/반품지 동기화 로그'";
+
+    if (sql_query($shipping_log_table)) {
+        echo "<span class='success'>✅ 출고지/반품지 동기화 로그 테이블 생성 (g5_coupang_shipping_log)</span><br>\n";
+        $install_log[] = "출고지/반품지 동기화 로그 테이블 생성";
+    } else {
+        echo "<span class='error'>❌ 출고지/반품지 동기화 로그 테이블 생성 실패</span><br>\n";
+        echo "<span class='error'>오류: " . sql_error() . "</span><br>\n";
+    }
+
+    // 동기화 통계 테이블 (기존에 없다면 생성)
+    $sync_stats_table = "
+    CREATE TABLE IF NOT EXISTS `" . G5_TABLE_PREFIX . "coupang_sync_stats` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `sync_type` varchar(50) NOT NULL COMMENT '동기화 타입',
+      `sync_date` date NOT NULL COMMENT '동기화 날짜',
+      `success_count` int(11) NOT NULL DEFAULT 0 COMMENT '성공 건수',
+      `fail_count` int(11) NOT NULL DEFAULT 0 COMMENT '실패 건수',
+      `last_execution_time` datetime DEFAULT NULL COMMENT '마지막 실행 시간',
+      `created_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `uk_sync_type_date` (`sync_type`, `sync_date`),
+      KEY `idx_sync_date` (`sync_date`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='쿠팡 동기화 통계'";
+
+    if (sql_query($sync_stats_table)) {
+        echo "<span class='success'>✅ 동기화 통계 테이블 생성 (g5_coupang_sync_stats)</span><br>\n";
+        $install_log[] = "동기화 통계 테이블 생성";
+    } else {
+        echo "<span class='error'>❌ 동기화 통계 테이블 생성 실패</span><br>\n";
+        echo "<span class='error'>오류: " . sql_error() . "</span><br>\n";
+    }
+
+    // 샘플 출고지/반품지 데이터 입력 (선택적)
+    echo "<h3>📋 샘플 출고지/반품지 데이터 입력</h3>\n";
+    
+    $sample_shipping_places = array(
+        array(
+            'code' => 'GNUWIZ_OUT_001',
+            'name' => '그누위즈 기본 출고지',
+            'type' => 'OUTBOUND',
+            'company' => '그누위즈',
+            'contact' => '관리자',
+            'phone' => '1544-0000',
+            'phone1' => '010-0000-0000',
+            'zipcode' => '06234',
+            'addr1' => '서울특별시 강남구 테헤란로',
+            'addr2' => '123번길 45, 그누위즈빌딩 3층',
+            'is_default_out' => 1,
+            'is_default_ret' => 0
+        ),
+        array(
+            'code' => 'GNUWIZ_RET_001',
+            'name' => '그누위즈 기본 반품지',
+            'type' => 'RETURN',
+            'company' => '그누위즈',
+            'contact' => '관리자',
+            'phone' => '1544-0000',
+            'phone1' => '010-0000-0000',
+            'zipcode' => '06234',
+            'addr1' => '서울특별시 강남구 테헤란로',
+            'addr2' => '123번길 45, 그누위즈빌딩 3층',
+            'is_default_out' => 0,
+            'is_default_ret' => 1
+        )
+    );
+
+    $inserted_shipping_places = 0;
+    foreach ($sample_shipping_places as $place) {
+        $sql = "INSERT IGNORE INTO " . G5_TABLE_PREFIX . "coupang_shipping_places 
+                (shipping_place_code, shipping_place_name, address_type, company_name, contact_name, 
+                 company_phone, phone1, zipcode, address1, address2, status, 
+                 is_default_outbound, is_default_return, notes, created_date) VALUES 
+                ('" . addslashes($place['code']) . "', 
+                 '" . addslashes($place['name']) . "', 
+                 '" . addslashes($place['type']) . "', 
+                 '" . addslashes($place['company']) . "', 
+                 '" . addslashes($place['contact']) . "', 
+                 '" . addslashes($place['phone']) . "', 
+                 '" . addslashes($place['phone1']) . "', 
+                 '" . addslashes($place['zipcode']) . "', 
+                 '" . addslashes($place['addr1']) . "', 
+                 '" . addslashes($place['addr2']) . "', 
+                 'ACTIVE', 
+                 " . intval($place['is_default_out']) . ", 
+                 " . intval($place['is_default_ret']) . ", 
+                 '설치시 생성된 샘플 데이터 - 실제 정보로 수정 필요', 
+                 NOW())";
+        
+        if (sql_query($sql)) {
+            $inserted_shipping_places++;
+        }
+    }
+
+    echo "<span class='success'>✅ 샘플 출고지/반품지 {$inserted_shipping_places}개 입력 완료</span><br>\n";
+    $install_log[] = "샘플 출고지/반품지 {$inserted_shipping_places}개 입력";
+
+    echo "<div class='info'>\n";
+    echo "<strong>📌 출고지/반품지 설정 안내:</strong><br>\n";
+    echo "1. 샘플 출고지/반품지가 생성되었습니다.<br>\n";
+    echo "2. 관리자 페이지에서 실제 정보로 수정하세요.<br>\n";
+    echo "3. 쿠팡 API로 실제 출고지/반품지를 등록한 후 동기화하세요.<br>\n";
+    echo "4. 상품 등록 시 출고지 코드가 필수입니다.<br>\n";
+    echo "</div>\n";
+
+    echo "</div>\n";
+
     // === 3단계: 기본 데이터 입력 ===
     echo "<div class='step'>\n";
     echo "<h2>📝 기본 데이터 입력</h2>\n";

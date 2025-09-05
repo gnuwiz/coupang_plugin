@@ -482,6 +482,453 @@ class CoupangAPI {
         return $this->makeRequest('PUT', $endpoint, $data);
     }
 
+	// ===================== 출고지 관리 API 메서드들 =====================
+
+    /**
+     * 출고지 등록
+     * @param array $shipping_place_data 출고지 정보
+     * @return array API 응답 결과
+     */
+    public function createOutboundShippingPlace($shipping_place_data) {
+        $endpoint = '/v2/providers/openapi/apis/api/v1/marketplace/shipping-places';
+        
+        // 입력 데이터 검증
+        $required_fields = array('name', 'company_name', 'contact_name', 'company_phone', 
+                               'zipcode', 'address1', 'address2');
+        foreach ($required_fields as $field) {
+            if (empty($shipping_place_data[$field])) {
+                return array('success' => false, 'error' => "필수 필드 누락: {$field}");
+            }
+        }
+        
+        $data = array(
+            'shippingPlaceName' => $shipping_place_data['name'],
+            'placeAddresses' => array(
+                array(
+                    'companyContactNumber' => $shipping_place_data['company_phone'],
+                    'phoneNumber2' => isset($shipping_place_data['phone2']) ? $shipping_place_data['phone2'] : '',
+                    'addressType' => 'OUTBOUND',
+                    'companyName' => $shipping_place_data['company_name'],
+                    'name' => $shipping_place_data['contact_name'],
+                    'phoneNumber1' => $shipping_place_data['phone1'],
+                    'zipCode' => $shipping_place_data['zipcode'],
+                    'address1' => $shipping_place_data['address1'],
+                    'address2' => $shipping_place_data['address2']
+                )
+            )
+        );
+        
+        coupang_log('INFO', '출고지 등록 요청', array('shipping_place_name' => $shipping_place_data['name']));
+        
+        $result = $this->makeRequest('POST', $endpoint, $data);
+        
+        // 결과 처리 및 로그
+        if ($result['success']) {
+            coupang_log('INFO', '출고지 등록 성공', array(
+                'shipping_place_name' => $shipping_place_data['name'],
+                'response_data' => $result['data']
+            ));
+            
+            // 로컬 DB에 저장
+            $this->saveShippingPlaceToLocal($result['data'], 'OUTBOUND');
+        } else {
+            coupang_log('ERROR', '출고지 등록 실패', array(
+                'shipping_place_name' => $shipping_place_data['name'],
+                'error' => $result['message']
+            ));
+        }
+        
+        return $result;
+    }
+
+    /**
+     * 반품지 등록
+     * @param array $return_place_data 반품지 정보
+     * @return array API 응답 결과
+     */
+    public function createReturnShippingPlace($return_place_data) {
+        $endpoint = '/v2/providers/openapi/apis/api/v1/marketplace/shipping-places';
+        
+        // 입력 데이터 검증
+        $required_fields = array('name', 'company_name', 'contact_name', 'company_phone', 
+                               'zipcode', 'address1', 'address2');
+        foreach ($required_fields as $field) {
+            if (empty($return_place_data[$field])) {
+                return array('success' => false, 'error' => "필수 필드 누락: {$field}");
+            }
+        }
+        
+        $data = array(
+            'shippingPlaceName' => $return_place_data['name'],
+            'placeAddresses' => array(
+                array(
+                    'companyContactNumber' => $return_place_data['company_phone'],
+                    'phoneNumber2' => isset($return_place_data['phone2']) ? $return_place_data['phone2'] : '',
+                    'addressType' => 'RETURN',
+                    'companyName' => $return_place_data['company_name'],
+                    'name' => $return_place_data['contact_name'],
+                    'phoneNumber1' => $return_place_data['phone1'],
+                    'zipCode' => $return_place_data['zipcode'],
+                    'address1' => $return_place_data['address1'],
+                    'address2' => $return_place_data['address2']
+                )
+            )
+        );
+        
+        coupang_log('INFO', '반품지 등록 요청', array('return_place_name' => $return_place_data['name']));
+        
+        $result = $this->makeRequest('POST', $endpoint, $data);
+        
+        // 결과 처리 및 로그
+        if ($result['success']) {
+            coupang_log('INFO', '반품지 등록 성공', array(
+                'return_place_name' => $return_place_data['name'],
+                'response_data' => $result['data']
+            ));
+            
+            // 로컬 DB에 저장
+            $this->saveShippingPlaceToLocal($result['data'], 'RETURN');
+        } else {
+            coupang_log('ERROR', '반품지 등록 실패', array(
+                'return_place_name' => $return_place_data['name'],
+                'error' => $result['message']
+            ));
+        }
+        
+        return $result;
+    }
+
+    /**
+     * 출고지/반품지 목록 조회
+     * @param string $address_type 'OUTBOUND' 또는 'RETURN' 또는 'ALL'
+     * @return array API 응답 결과
+     */
+    public function getShippingPlaces($address_type = 'ALL') {
+        $endpoint = '/v2/providers/openapi/apis/api/v1/marketplace/shipping-places';
+        
+        coupang_log('INFO', '출고지/반품지 목록 조회', array('address_type' => $address_type));
+        
+        $result = $this->makeRequest('GET', $endpoint);
+        
+        if ($result['success'] && isset($result['data']['data'])) {
+            $shipping_places = $result['data']['data'];
+            
+            // 타입별 필터링
+            if ($address_type !== 'ALL') {
+                $filtered_places = array();
+                foreach ($shipping_places as $place) {
+                    if (isset($place['placeAddresses'])) {
+                        foreach ($place['placeAddresses'] as $address) {
+                            if ($address['addressType'] === $address_type) {
+                                $filtered_places[] = $place;
+                                break;
+                            }
+                        }
+                    }
+                }
+                $shipping_places = $filtered_places;
+            }
+            
+            coupang_log('INFO', '출고지/반품지 조회 성공', array(
+                'address_type' => $address_type,
+                'count' => count($shipping_places)
+            ));
+            
+            // 로컬 DB에 동기화
+            $this->syncShippingPlacesToLocal($shipping_places);
+            
+            return array(
+                'success' => true,
+                'data' => $shipping_places,
+                'count' => count($shipping_places)
+            );
+        } else {
+            coupang_log('ERROR', '출고지/반품지 조회 실패', array(
+                'error' => $result['message']
+            ));
+            return $result;
+        }
+    }
+
+    /**
+     * 특정 출고지/반품지 상세 조회
+     * @param string $shipping_place_code 출고지/반품지 코드
+     * @return array API 응답 결과
+     */
+    public function getShippingPlaceDetail($shipping_place_code) {
+        $endpoint = "/v2/providers/openapi/apis/api/v1/marketplace/shipping-places/{$shipping_place_code}";
+        
+        coupang_log('INFO', '출고지/반품지 상세 조회', array('shipping_place_code' => $shipping_place_code));
+        
+        $result = $this->makeRequest('GET', $endpoint);
+        
+        if ($result['success']) {
+            coupang_log('INFO', '출고지/반품지 상세 조회 성공', array(
+                'shipping_place_code' => $shipping_place_code,
+                'response_data' => $result['data']
+            ));
+        } else {
+            coupang_log('ERROR', '출고지/반품지 상세 조회 실패', array(
+                'shipping_place_code' => $shipping_place_code,
+                'error' => $result['message']
+            ));
+        }
+        
+        return $result;
+    }
+
+    /**
+     * 출고지/반품지 수정
+     * @param string $shipping_place_code 출고지/반품지 코드
+     * @param array $update_data 수정할 데이터
+     * @return array API 응답 결과
+     */
+    public function updateShippingPlace($shipping_place_code, $update_data) {
+        $endpoint = "/v2/providers/openapi/apis/api/v1/marketplace/shipping-places/{$shipping_place_code}";
+        
+        coupang_log('INFO', '출고지/반품지 수정 요청', array(
+            'shipping_place_code' => $shipping_place_code,
+            'update_fields' => array_keys($update_data)
+        ));
+        
+        $result = $this->makeRequest('PUT', $endpoint, $update_data);
+        
+        if ($result['success']) {
+            coupang_log('INFO', '출고지/반품지 수정 성공', array(
+                'shipping_place_code' => $shipping_place_code,
+                'response_data' => $result['data']
+            ));
+            
+            // 로컬 DB 업데이트
+            $this->updateShippingPlaceInLocal($shipping_place_code, $update_data);
+        } else {
+            coupang_log('ERROR', '출고지/반품지 수정 실패', array(
+                'shipping_place_code' => $shipping_place_code,
+                'error' => $result['message']
+            ));
+        }
+        
+        return $result;
+    }
+
+    /**
+     * 출고지/반품지 삭제
+     * @param string $shipping_place_code 출고지/반품지 코드
+     * @return array API 응답 결과
+     */
+    public function deleteShippingPlace($shipping_place_code) {
+        $endpoint = "/v2/providers/openapi/apis/api/v1/marketplace/shipping-places/{$shipping_place_code}";
+        
+        coupang_log('INFO', '출고지/반품지 삭제 요청', array('shipping_place_code' => $shipping_place_code));
+        
+        $result = $this->makeRequest('DELETE', $endpoint);
+        
+        if ($result['success']) {
+            coupang_log('INFO', '출고지/반품지 삭제 성공', array(
+                'shipping_place_code' => $shipping_place_code
+            ));
+            
+            // 로컬 DB에서 삭제
+            $this->deleteShippingPlaceFromLocal($shipping_place_code);
+        } else {
+            coupang_log('ERROR', '출고지/반품지 삭제 실패', array(
+                'shipping_place_code' => $shipping_place_code,
+                'error' => $result['message']
+            ));
+        }
+        
+        return $result;
+    }
+
+    // ===================== 출고지 관리 로컬 DB 헬퍼 메서드들 =====================
+
+    /**
+     * 출고지/반품지 정보를 로컬 DB에 저장
+     * @param array $shipping_place_data 쿠팡 API 응답 데이터
+     * @param string $address_type 주소 타입 ('OUTBOUND' 또는 'RETURN')
+     * @return bool 저장 성공 여부
+     */
+    private function saveShippingPlaceToLocal($shipping_place_data, $address_type) {
+        global $g5;
+        
+        if (!isset($shipping_place_data['shippingPlaceCode']) || !isset($shipping_place_data['shippingPlaceName'])) {
+            return false;
+        }
+        
+        $sql = "INSERT INTO " . G5_TABLE_PREFIX . "coupang_shipping_places SET 
+                shipping_place_code = '" . addslashes($shipping_place_data['shippingPlaceCode']) . "',
+                shipping_place_name = '" . addslashes($shipping_place_data['shippingPlaceName']) . "',
+                address_type = '" . addslashes($address_type) . "',
+                place_data = '" . addslashes(json_encode($shipping_place_data, JSON_UNESCAPED_UNICODE)) . "',
+                status = 'ACTIVE',
+                last_sync_date = NOW(),
+                created_date = NOW()
+                ON DUPLICATE KEY UPDATE
+                shipping_place_name = VALUES(shipping_place_name),
+                place_data = VALUES(place_data),
+                status = VALUES(status),
+                last_sync_date = NOW()";
+        
+        return sql_query($sql);
+    }
+
+    /**
+     * 출고지/반품지 목록을 로컬 DB에 동기화
+     * @param array $shipping_places 쿠팡 API 응답 데이터
+     * @return int 동기화된 개수
+     */
+    private function syncShippingPlacesToLocal($shipping_places) {
+        $sync_count = 0;
+        
+        foreach ($shipping_places as $place) {
+            if (isset($place['placeAddresses'])) {
+                foreach ($place['placeAddresses'] as $address) {
+                    if (isset($address['addressType'])) {
+                        if ($this->saveShippingPlaceToLocal($place, $address['addressType'])) {
+                            $sync_count++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        coupang_log('INFO', '출고지/반품지 로컬 동기화 완료', array('sync_count' => $sync_count));
+        
+        return $sync_count;
+    }
+
+    /**
+     * 로컬 DB의 출고지/반품지 정보 업데이트
+     * @param string $shipping_place_code 출고지/반품지 코드
+     * @param array $update_data 업데이트 데이터
+     * @return bool 업데이트 성공 여부
+     */
+    private function updateShippingPlaceInLocal($shipping_place_code, $update_data) {
+        global $g5;
+        
+        $update_fields = array();
+        
+        if (isset($update_data['shippingPlaceName'])) {
+            $update_fields[] = "shipping_place_name = '" . addslashes($update_data['shippingPlaceName']) . "'";
+        }
+        
+        if (isset($update_data['status'])) {
+            $update_fields[] = "status = '" . addslashes($update_data['status']) . "'";
+        }
+        
+        $update_fields[] = "place_data = '" . addslashes(json_encode($update_data, JSON_UNESCAPED_UNICODE)) . "'";
+        $update_fields[] = "last_sync_date = NOW()";
+        
+        if (empty($update_fields)) {
+            return false;
+        }
+        
+        $sql = "UPDATE " . G5_TABLE_PREFIX . "coupang_shipping_places SET " . 
+               implode(', ', $update_fields) . " 
+               WHERE shipping_place_code = '" . addslashes($shipping_place_code) . "'";
+        
+        return sql_query($sql);
+    }
+
+    /**
+     * 로컬 DB에서 출고지/반품지 삭제
+     * @param string $shipping_place_code 출고지/반품지 코드
+     * @return bool 삭제 성공 여부
+     */
+    private function deleteShippingPlaceFromLocal($shipping_place_code) {
+        global $g5;
+        
+        $sql = "UPDATE " . G5_TABLE_PREFIX . "coupang_shipping_places SET 
+                status = 'DELETED',
+                last_sync_date = NOW()
+                WHERE shipping_place_code = '" . addslashes($shipping_place_code) . "'";
+        
+        return sql_query($sql);
+    }
+
+    /**
+     * 로컬 DB에서 출고지 목록 조회
+     * @param string $address_type 주소 타입 ('OUTBOUND', 'RETURN', 'ALL')
+     * @param string $status 상태 ('ACTIVE', 'DELETED', 'ALL')
+     * @return array 출고지 목록
+     */
+    public function getLocalShippingPlaces($address_type = 'ALL', $status = 'ACTIVE') {
+        global $g5;
+        
+        $where_conditions = array();
+        
+        if ($address_type !== 'ALL') {
+            $where_conditions[] = "address_type = '" . addslashes($address_type) . "'";
+        }
+        
+        if ($status !== 'ALL') {
+            $where_conditions[] = "status = '" . addslashes($status) . "'";
+        }
+        
+        $where_clause = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
+        
+        $sql = "SELECT * FROM " . G5_TABLE_PREFIX . "coupang_shipping_places {$where_clause} 
+                ORDER BY address_type, shipping_place_name";
+        
+        $result = sql_query($sql);
+        $shipping_places = array();
+        
+        while ($row = sql_fetch_array($result)) {
+            $row['place_data_decoded'] = json_decode($row['place_data'], true);
+            $shipping_places[] = $row;
+        }
+        
+        return $shipping_places;
+    }
+
+    /**
+     * 출고지/반품지 동기화 (크론용)
+     * @return array 동기화 결과
+     */
+    public function syncShippingPlacesFromCoupang() {
+        $start_time = microtime(true);
+        
+        coupang_log('INFO', '출고지/반품지 동기화 시작');
+        
+        try {
+            // 쿠팡에서 출고지/반품지 목록 가져오기
+            $result = $this->getShippingPlaces('ALL');
+            
+            if (!$result['success']) {
+                throw new Exception('쿠팡 출고지/반품지 조회 실패: ' . $result['message']);
+            }
+            
+            $sync_count = isset($result['count']) ? $result['count'] : 0;
+            $execution_time = microtime(true) - $start_time;
+            
+            coupang_log('INFO', '출고지/반품지 동기화 완료', array(
+                'sync_count' => $sync_count,
+                'execution_time' => round($execution_time, 2) . 's'
+            ));
+            
+            return array(
+                'success' => true,
+                'sync_count' => $sync_count,
+                'execution_time' => $execution_time,
+                'message' => "출고지/반품지 {$sync_count}개 동기화 완료"
+            );
+            
+        } catch (Exception $e) {
+            $execution_time = microtime(true) - $start_time;
+            
+            coupang_log('ERROR', '출고지/반품지 동기화 실패', array(
+                'error' => $e->getMessage(),
+                'execution_time' => round($execution_time, 2) . 's'
+            ));
+            
+            return array(
+                'success' => false,
+                'error' => $e->getMessage(),
+                'execution_time' => $execution_time
+            );
+        }
+    }
+
     // ===================== 기존 메서드들 (동기화 관련) =====================
     // 여기에는 기존의 동기화 메서드들이 그대로 유지됩니다
     
