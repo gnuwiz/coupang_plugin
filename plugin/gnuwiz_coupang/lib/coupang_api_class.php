@@ -113,6 +113,8 @@ class CoupangAPI {
             'retry' => COUPANG_MAX_RETRY,
             'rate_limit' => true
         );
+
+        echo 'asdasd';
         $options = array_merge($default_options, $options);
         
         // 요청 제한 처리
@@ -274,7 +276,7 @@ class CoupangAPI {
      * @param string $message 로그 메시지
      * @param array $context 추가 컨텍스트
      */
-    private function log($level, $message, $context = array()) {
+    public function log($level, $message, $context = array()) {
         // coupang_log 함수가 있다면 사용, 없으면 error_log 사용
         if (function_exists('coupang_log')) {
             coupang_log($level, $message, $context);
@@ -337,6 +339,8 @@ class CoupangAPI {
             'error_count' => count($validation_result['errors']),
             'warning_count' => count($validation_result['warnings'])
         ));
+
+        //print_r2($validation_result);
         
         return $validation_result;
     }
@@ -398,7 +402,7 @@ class CoupangAPI {
         } else {
             $validation_result['details'][] = 'TIMEOUT: ' . COUPANG_TIMEOUT . '초';
         }
-        
+
         return $validation_result;
     }
 
@@ -3514,7 +3518,7 @@ class CoupangAPI {
      * 카테고리 매핑 통계
      * @return array 매핑 통계
      */
-    private function getCategoryMappingStats() {
+    public function getCategoryMappingStats() {
         $stats = array(
             'total_mappings' => 0,
             'high_confidence' => 0,
@@ -3634,7 +3638,7 @@ function coupang_log($level, $message, $context = array(), $log_file = 'general.
     if (!is_dir($log_dir)) {
         mkdir($log_dir, 0755, true);
     }
-    
+
     $log_path = $log_dir . '/' . $log_file;
     
     // 로그 파일 크기 체크 (10MB 초과 시 로테이션)

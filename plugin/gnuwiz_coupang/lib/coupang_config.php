@@ -68,25 +68,26 @@ $GLOBALS['COUPANG_DELIVERY_COMPANIES'] = array(
 // === 설정 검증 함수 ===
 function validate_coupang_config() {
     $errors = array();
-    
+
     if (COUPANG_ACCESS_KEY === 'YOUR_ACCESS_KEY_HERE') {
         $errors[] = 'ACCESS_KEY가 설정되지 않았습니다.';
     }
-    
+
     if (COUPANG_SECRET_KEY === 'YOUR_SECRET_KEY_HERE') {
         $errors[] = 'SECRET_KEY가 설정되지 않았습니다.';
     }
-    
+
     if (COUPANG_VENDOR_ID === 'YOUR_VENDOR_ID_HERE') {
         $errors[] = 'VENDOR_ID가 설정되지 않았습니다.';
     }
-    
+
     if (!function_exists('curl_init')) {
         $errors[] = 'cURL 확장이 설치되지 않았습니다.';
     }
-    
+
     return array(
-        'valid' => empty($errors),
+        'success' => empty($errors),  // 🔥 이 라인 추가
+        'valid' => empty($errors),    // 기존 유지
         'errors' => $errors
     );
 }

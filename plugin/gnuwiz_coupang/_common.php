@@ -11,3 +11,8 @@ if (!defined('COUPANG_PLUGIN_PATH')) {
 // 쿠팡 설정 및 API 클래스 로드
 include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_config.php');
 include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_api_class.php');
+/*
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+*/
