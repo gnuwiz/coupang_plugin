@@ -17,6 +17,25 @@ define('COUPANG_ACCESS_KEY', '7f35aeef-fb5a-47bf-bb99-9099a1d6ad3e');
 define('COUPANG_SECRET_KEY', '123622c45cf4eb91324229bc77e45ee28cb8862e');
 define('COUPANG_VENDOR_ID', 'A00509424');
 
+// === 출고지/반품지 관련 설정 ===
+define('COUPANG_DEFAULT_OUTBOUND_PLACE', ''); 
+define('COUPANG_DEFAULT_RETURN_PLACE', '');   
+define('COUPANG_SHIPPING_SYNC_INTERVAL', 24); 
+
+// === 상품 등록 관련 설정 ===
+define('COUPANG_DEFAULT_SHIPPING_TIME', 1);   
+define('COUPANG_AUTO_APPROVAL_REQUEST', false); 
+define('COUPANG_DEFAULT_VENDOR_USER_ID', ''); 
+
+// === API 엔드포인트 상수 ===
+define('COUPANG_API_BASE_URL', 'https://api-gateway.coupang.com');
+define('COUPANG_API_OUTBOUND_PLACES', '/v2/providers/openapi/apis/api/v1/marketplace/shipping-places/outbound');
+define('COUPANG_API_RETURN_PLACES', '/v2/providers/openapi/apis/api/v1/marketplace/shipping-places/return');
+define('COUPANG_API_PRODUCTS', '/v2/providers/openapi/apis/api/v1/marketplace/seller-products');
+define('COUPANG_API_ORDERS', '/v2/providers/openapi/apis/api/v1/marketplace/orders');
+define('COUPANG_API_CATEGORIES', '/v2/providers/openapi/apis/api/v1/marketplace/meta/categories');
+define('COUPANG_API_CATEGORY_PREDICT', '/v2/providers/openapi/apis/api/v1/categorization/predict');
+
 // === API 호출 제한 설정 ===
 define('COUPANG_API_DELAY', 1);        // API 호출 간 지연 시간 (초)
 define('COUPANG_MAX_RETRY', 3);        // 재시도 횟수
