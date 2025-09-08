@@ -1,10 +1,16 @@
 <?php
 /**
- * 쿠팡 연동 통합 크론 스크립트 (카테고리 추천 포함)
- * 경로: /plugin/coupang/cron/main_cron.php
+ * === main_cron.php ===
+ * 쿠팡 연동 통합 크론 스크립트 (백업용)
+ * 경로: /plugin/gnuwiz_coupang/cron/main_cron.php
+ * 용도: CLI 인자로 sync_type을 받아서 해당 동기화 실행
  * 실행: php main_cron.php [sync_type]
- * 용도: 모든 동기화 작업을 하나의 파일에서 처리
  */
+
+// CLI 환경에서만 실행
+if (php_sapi_name() !== 'cli') {
+    die('CLI 환경에서만 실행 가능합니다.');
+}
 
 // 플러그인 경로 설정
 define('COUPANG_PLUGIN_PATH', dirname(dirname(__FILE__)));
@@ -23,20 +29,21 @@ $sync_type = isset($argv[1]) ? $argv[1] : '';
 $valid_types = array(
     'orders', 'cancelled_orders', 'order_status', 
     'products', 'product_status', 'stock',
-    'category_recommendations', 'category_cache_cleanup'  // 🔥 새로운 타입들 추가
+    'shipping_places', 'category_recommendations', 'category_cache_cleanup'
 );
 
 if (empty($sync_type) || !in_array($sync_type, $valid_types)) {
     echo "사용법: php main_cron.php [sync_type]\n";
     echo "동기화 타입:\n";
-    echo "  orders              - 쿠팡 → 영카트 주문 동기화 (매분 실행)\n";
-    echo "  cancelled_orders    - 쿠팡 취소 주문 → 영카트 반영 (매분 실행)\n";
-    echo "  order_status        - 영카트 주문 상태 → 쿠팡 반영 (매분 실행)\n";
-    echo "  products            - 영카트 상품 → 쿠팡 등록/업데이트 (하루 2번)\n";
-    echo "  product_status      - 영카트 상품 상태 → 쿠팡 반영 (하루 2번)\n";
-    echo "  stock               - 영카트 재고/가격 → 쿠팡 동기화 (하루 2번)\n";
-    echo "  category_recommendations - 카테고리 추천 배치 실행 (하루 1번)\n";
-    echo "  category_cache_cleanup   - 카테고리 캐시 정리 (하루 1번)\n";
+    echo "  orders                    - 쿠팡 → 영카트 주문 동기화 (매분 실행)\n";
+    echo "  cancelled_orders          - 쿠팡 취소 주문 → 영카트 반영 (매분 실행)\n";
+    echo "  order_status              - 영카트 주문 상태 → 쿠팡 반영 (매분 실행)\n";
+    echo "  products                  - 영카트 상품 → 쿠팡 등록/업데이트 (하루 2번)\n";
+    echo "  product_status            - 영카트 상품 상태 → 쿠팡 반영 (하루 2번)\n";
+    echo "  stock                     - 영카트 재고/가격 → 쿠팡 동기화 (하루 2번)\n";
+    echo "  shipping_places           - 출고지/반품지 동기화 (하루 1번)\n";
+    echo "  category_recommendations  - 카테고리 추천 배치 실행 (하루 1번)\n";
+    echo "  category_cache_cleanup    - 카테고리 캐시 정리 (하루 1번)\n";
     exit(1);
 }
 
@@ -82,9 +89,7 @@ try {
             
         case 'product_status':
             echo $log_prefix . "상품 상태 동기화 실행\n";
-            // 이 기능은 래퍼 함수 사용 (복잡한 로직 때문)
-            $success = cron_sync_product_status_to_coupang();
-            $result = array('success' => $success, 'stats' => array('legacy' => true));
+            $result = cron_sync_product_status_to_coupang();
             break;
             
         case 'stock':
@@ -92,7 +97,11 @@ try {
             $result = $coupang_api->syncStockToCoupang();
             break;
             
-        // 🔥 새로운 카테고리 관련 크론 작업들
+        case 'shipping_places':
+            echo $log_prefix . "출고지/반품지 동기화 실행\n";
+            $result = $coupang_api->syncShippingPlacesFromCoupang();
+            break;
+            
         case 'category_recommendations':
             echo $log_prefix . "카테고리 추천 배치 실행\n";
             $batch_limit = 30; // 한 번에 30개씩 처리

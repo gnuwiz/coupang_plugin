@@ -1,0 +1,73 @@
+# ==========================================
+# 쿠팡 연동 플러그인 크론탭 설정 가이드
+# 경로: /plugin/gnuwiz_coupang/cron/
+# ==========================================
+
+# === 주문 관련 동기화 (매분 실행) ===
+*/1 * * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/orders.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/orders.log 2>&1
+*/1 * * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/cancelled_orders.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/cancelled.log 2>&1
+*/1 * * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/order_status.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/status.log 2>&1
+
+# === 상품 관련 동기화 (하루 2번: 오전 9시, 오후 9시) ===
+0 9,21 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/products.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/products.log 2>&1
+15 9,21 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/product_status.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/product_status.log 2>&1
+30 10,22 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/stock.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/stock.log 2>&1
+
+# === 카테고리 및 출고지 (하루 1번: 새벽 시간) ===
+0 2 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/category_recommendations.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/category.log 2>&1
+0 3 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/category_cache_cleanup.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/cleanup.log 2>&1
+0 4 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/shipping_places.php >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/shipping.log 2>&1
+
+# ==========================================
+# 대안: 통합 크론 방식 (선택사항)
+# ==========================================
+
+# 주문 관련 (매분)
+*/1 * * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php orders >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+*/1 * * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php cancelled_orders >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+*/1 * * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php order_status >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+
+# 상품 관련 (하루 2번)
+0 9,21 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php products >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+15 9,21 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php product_status >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+30 10,22 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php stock >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+
+# 기타 (하루 1번)
+0 2 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php category_recommendations >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+0 3 * * * /usr/bin/php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php category_cache_cleanup >> /path/to/youngcart/plugin/gnuwiz_coupang/logs/unified.log 2>&1
+
+# ==========================================
+# 수동 테스트용 명령어들
+# ==========================================
+
+# 개별 파일 수동 실행
+# php /path/to/youngcart/plugin/gnuwiz_coupang/cron/orders.php
+# php /path/to/youngcart/plugin/gnuwiz_coupang/cron/products.php
+# php /path/to/youngcart/plugin/gnuwiz_coupang/cron/category_recommendations.php
+
+# 통합 크론 수동 실행
+# php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php orders
+# php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php products
+# php /path/to/youngcart/plugin/gnuwiz_coupang/cron/main_cron.php category_recommendations
+
+# ==========================================
+# 로그 파일 권한 설정
+# ==========================================
+
+# chmod 755 /path/to/youngcart/plugin/gnuwiz_coupang/logs/
+# chmod 644 /path/to/youngcart/plugin/gnuwiz_coupang/logs/*.log
+
+# ==========================================
+# 로그 로테이션 설정 (logrotate)
+# ==========================================
+
+# /etc/logrotate.d/coupang-plugin 파일 생성:
+# /path/to/youngcart/plugin/gnuwiz_coupang/logs/*.log {
+#     daily
+#     missingok
+#     rotate 30
+#     compress
+#     delaycompress
+#     notifempty
+#     copytruncate
+# }
