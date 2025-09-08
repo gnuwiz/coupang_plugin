@@ -1,605 +1,1092 @@
 <?php
 /**
- * 개선된 쿠팡 연동 수동 동기화 관리 페이지
- * 경로: /plugin/coupang/admin/manual_sync.php
- * 용도: 관리자가 수동으로 동기화를 실행하고 현황을 모니터링
+ * ============================================================================
+ * 쿠팡 연동 플러그인 - 수동 동기화 통합 관리 페이지
+ * ============================================================================
+ * 파일: /plugin/gnuwiz_coupang/admin/manual_sync.php
+ * 용도: 10개 크론 작업 수동 실행 및 통합 모니터링
+ * 작성: 그누위즈 (gnuwiz@example.com)
+ * 버전: 2.2.0 (Phase 2-2)
+ * 
+ * 주요 기능:
+ * - 10개 크론 작업 개별 수동 실행
+ * - 실시간 로그 모니터링
+ * - 동기화 통계 및 성과 분석
+ * - 배치 실행 및 스케줄 관리
+ * - 오류 진단 및 해결 가이드
  */
 
-include_once('../_common.php');
+include_once('./_common.php');
 
 // 관리자 권한 체크
 if (!$is_admin) {
-    die('관리자만 접근할 수 있습니다.');
+    alert('관리자만 접근할 수 있습니다.');
+    goto_url(G5_URL);
 }
 
-$action = isset($_GET['action']) ? $_GET['action'] : '';
+// 페이지 설정
+$g5['title'] = '쿠팡 연동 수동 동기화 관리';
+include_once(G5_ADMIN_PATH.'/admin.head.php');
 
-// AJAX 요청 처리
-if ($action && isset($_GET['ajax'])) {
-    header('Content-Type: application/json; charset=utf-8');
+// 쿠팡 플러그인 초기화
+include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_config.php');
+include_once(COUPANG_PLUGIN_PATH . '/lib/coupang_api_class.php');
+
+// API 인스턴스 생성
+$coupang_api = get_coupang_api();
+$config_status = validate_coupang_config();
+
+// AJAX 요청 처리 (크론 작업 실행)
+if (isset($_POST['action']) && $_POST['action'] === 'run_cron') {
+    header('Content-Type: application/json');
+    
+    $cron_type = isset($_POST['cron_type']) ? $_POST['cron_type'] : '';
+    $params = isset($_POST['params']) ? json_decode($_POST['params'], true) : array();
+    
+    if (!$coupang_api) {
+        echo json_encode(array(
+            'success' => false,
+            'error' => 'API 인스턴스를 생성할 수 없습니다.',
+            'execution_time' => 0
+        ));
+        exit;
+    }
     
     try {
-        // API 설정 검증
-        $config_check = validate_coupang_config();
-        if (!$config_check['valid']) {
-            throw new Exception('API 설정 오류: ' . implode(', ', $config_check['errors']));
-        }
+        $start_time = microtime(true);
+        $result = array('success' => false, 'error' => '지원하지 않는 크론 타입입니다.');
         
-        $coupang_api = new CoupangAPI(array(
-            'access_key' => COUPANG_ACCESS_KEY,
-            'secret_key' => COUPANG_SECRET_KEY,
-            'vendor_id'  => COUPANG_VENDOR_ID
-        ));
-        $result = array('success' => false, 'message' => '', 'stats' => array());
-        
-        switch ($action) {
-            case 'sync_orders':
-                $sync_result = $coupang_api->syncOrdersFromCoupang(1);
-                $result['success'] = $sync_result['success'];
-                $result['message'] = $sync_result['success'] ? '주문 동기화 성공' : $sync_result['message'];
-                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
+        switch ($cron_type) {
+            case 'orders':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 50;
+                $result = $coupang_api->syncOrdersFromCoupang($limit);
                 break;
                 
-            case 'sync_cancelled':
-                $sync_result = $coupang_api->syncCancelledOrdersFromCoupang(1);
-                $result['success'] = $sync_result['success'];
-                $result['message'] = $sync_result['success'] ? '취소 주문 동기화 성공' : $sync_result['message'];
-                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
+            case 'cancelled_orders':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 50;
+                $result = $coupang_api->syncCancelledOrdersFromCoupang($limit);
                 break;
                 
-            case 'sync_products':
-                $sync_result = $coupang_api->syncProductsToCoupang(50); // 테스트용 작은 배치
-                $result['success'] = $sync_result['success'];
-                $result['message'] = $sync_result['success'] ? '상품 동기화 성공' : $sync_result['message'];
-                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
+            case 'order_status':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 50;
+                $result = $coupang_api->syncOrderStatusToCoupang($limit);
                 break;
                 
-            case 'sync_stock':
-                $sync_result = $coupang_api->syncStockAndPrice(50); // 테스트용 작은 배치
-                $result['success'] = $sync_result['success'];
-                $result['message'] = $sync_result['success'] ? '재고/가격 동기화 성공' : $sync_result['message'];
-                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
+            case 'products':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 20;
+                $result = $coupang_api->syncProductsToCoupang($limit);
                 break;
                 
-            case 'sync_order_status':
-                $sync_result = $coupang_api->syncOrderStatusToCoupang(20); // 테스트용 작은 배치
-                $result['success'] = $sync_result['success'];
-                $result['message'] = $sync_result['success'] ? '주문 상태 동기화 성공' : $sync_result['message'];
-                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
+            case 'product_status':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 50;
+                $result = $coupang_api->syncProductStatus($limit);
                 break;
                 
-            case 'sync_product_status':
-                $sync_result = $coupang_api->syncProductStatusToCoupang();
-                $result['success'] = $sync_result['success'];
-                $result['message'] = $sync_result['success'] ? '상품 상태 동기화 성공' : $sync_result['message'];
-                if (isset($sync_result['stats'])) $result['stats'] = $sync_result['stats'];
+            case 'stock':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 50;
+                $result = $coupang_api->syncStockToCoupang($limit);
                 break;
                 
-            case 'test_api':
-                // API 연결 테스트
-                $test_result = $coupang_api->getOrders(date('Y-m-d\TH:i:s\Z', strtotime('-1 day')), date('Y-m-d\TH:i:s\Z'));
-                $result['success'] = $test_result['success'];
-                $result['message'] = $test_result['success'] ? 'API 연결 성공' : 'API 연결 실패: ' . $test_result['message'];
-                $result['data'] = $test_result;
+            case 'shipping_places':
+                $result = $coupang_api->syncShippingPlacesFromCoupang();
                 break;
                 
-            case 'get_stats':
-                $result = get_sync_statistics();
+            case 'category_recommendations':
+                $limit = isset($params['limit']) ? intval($params['limit']) : 20;
+                $result = $coupang_api->batchProcessCategoryRecommendations($limit);
+                break;
+                
+            case 'category_cache_cleanup':
+                $result = $coupang_api->cleanupCategoryCache();
                 break;
                 
             default:
-                throw new Exception('알 수 없는 액션');
+                throw new Exception('지원하지 않는 크론 타입: ' . $cron_type);
         }
         
-        echo json_encode($result);
+        $execution_time = microtime(true) - $start_time;
+        
+        // 크론 로그 기록
+        monitor_cron_execution($cron_type, $result['success'] ? 'SUCCESS' : 'ERROR', 
+                             $result['success'] ? '수동 실행 성공' : $result['error'], 
+                             $execution_time, $result);
+        
+        echo json_encode(array(
+            'success' => $result['success'],
+            'result' => $result,
+            'execution_time' => round($execution_time * 1000, 2),
+            'cron_type' => $cron_type
+        ));
         
     } catch (Exception $e) {
+        $execution_time = microtime(true) - $start_time;
+        
+        // 오류 로그 기록
+        monitor_cron_execution($cron_type, 'ERROR', $e->getMessage(), $execution_time);
+        
         echo json_encode(array(
-            'success' => false, 
-            'message' => $e->getMessage(),
-            'stats' => array()
+            'success' => false,
+            'error' => $e->getMessage(),
+            'execution_time' => round($execution_time * 1000, 2),
+            'cron_type' => $cron_type
         ));
     }
+    
     exit;
 }
 
-// 통계 데이터 가져오기 함수 (개선됨)
-function get_sync_statistics() {
-    global $g5;
-    
-    // 상품 동기화 현황
-    $product_stats = sql_fetch("
-        SELECT 
-            COUNT(*) as total_items,
-            (SELECT COUNT(*) FROM " . G5_TABLE_PREFIX . "coupang_item_map WHERE sync_status = 'active') as synced_active,
-            (SELECT COUNT(*) FROM " . G5_TABLE_PREFIX . "coupang_item_map WHERE sync_status = 'inactive') as synced_inactive,
-            (SELECT COUNT(*) FROM " . G5_TABLE_PREFIX . "coupang_item_map WHERE sync_status = 'error') as synced_error
-        FROM {$g5['g5_shop_item_table']} 
-        WHERE it_use = '1'
-    ");
-    
-    // 주문 현황
-    $order_stats = sql_fetch("
-        SELECT 
-            COUNT(*) as total_coupang_orders,
-            SUM(CASE WHEN od_status = '입금' THEN 1 ELSE 0 END) as pending_orders,
-            SUM(CASE WHEN od_status = '준비' THEN 1 ELSE 0 END) as preparing_orders,
-            SUM(CASE WHEN od_status = '배송' THEN 1 ELSE 0 END) as shipping_orders,
-            SUM(CASE WHEN od_status = '완료' THEN 1 ELSE 0 END) as completed_orders,
-            SUM(CASE WHEN od_status = '취소' THEN 1 ELSE 0 END) as cancelled_orders
-        FROM {$g5['g5_shop_order_table']} 
-        WHERE od_coupang_yn = 'Y'
-    ");
-    
-    // 최근 크론 실행 현황
-    $cron_stats = sql_fetch("
-        SELECT 
-            COUNT(*) as total_executions,
-            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
-            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
-            MAX(execution_time) as last_execution
-        FROM " . G5_TABLE_PREFIX . "coupang_cron_log 
-        WHERE execution_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-    ");
-    
-    // 최근 오류 로그
-    $recent_errors = array();
-    $error_sql = "SELECT cron_type, message, execution_time 
-                  FROM " . G5_TABLE_PREFIX . "coupang_cron_log 
-                  WHERE status = 'error' 
-                  ORDER BY execution_time DESC 
-                  LIMIT 5";
-    $error_result = sql_query($error_sql);
-    while ($row = sql_fetch_array($error_result)) {
-        $recent_errors[] = $row;
+// 최근 크론 로그 조회 (각 타입별 최신 5개)
+$recent_logs_sql = "SELECT * FROM (
+                        SELECT *, ROW_NUMBER() OVER (PARTITION BY cron_type ORDER BY created_date DESC) as rn 
+                        FROM " . G5_TABLE_PREFIX . "coupang_cron_log 
+                        WHERE created_date >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                    ) ranked 
+                    WHERE rn <= 5 
+                    ORDER BY created_date DESC 
+                    LIMIT 50";
+$recent_logs_result = sql_query($recent_logs_sql);
+
+// 오늘의 크론 통계
+$today_stats_sql = "SELECT 
+                        cron_type,
+                        COUNT(*) as total_runs,
+                        SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_runs,
+                        SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END) as error_runs,
+                        AVG(execution_duration) as avg_duration,
+                        MAX(created_date) as last_run
+                    FROM " . G5_TABLE_PREFIX . "coupang_cron_log 
+                    WHERE DATE(created_date) = CURDATE()
+                    GROUP BY cron_type
+                    ORDER BY last_run DESC";
+$today_stats_result = sql_query($today_stats_sql);
+
+// 크론 작업 정의
+$cron_jobs = array(
+    'orders' => array(
+        'name' => '📋 주문 동기화',
+        'description' => '쿠팡 주문을 영카트로 가져오기',
+        'icon' => '📋',
+        'category' => 'order',
+        'priority' => 'high',
+        'default_limit' => 50,
+        'execution_time' => '1-2분',
+        'frequency' => '매분'
+    ),
+    'cancelled_orders' => array(
+        'name' => '❌ 취소 주문 동기화',
+        'description' => '쿠팡 취소 주문 처리',
+        'icon' => '❌',
+        'category' => 'order',
+        'priority' => 'high',
+        'default_limit' => 50,
+        'execution_time' => '30초-1분',
+        'frequency' => '매분'
+    ),
+    'order_status' => array(
+        'name' => '📝 주문 상태 동기화',
+        'description' => '영카트 주문 상태를 쿠팡에 전송',
+        'icon' => '📝',
+        'category' => 'order',
+        'priority' => 'high',
+        'default_limit' => 50,
+        'execution_time' => '30초-1분',
+        'frequency' => '매분'
+    ),
+    'products' => array(
+        'name' => '🛍️ 상품 동기화',
+        'description' => '영카트 상품을 쿠팡에 등록/업데이트',
+        'icon' => '🛍️',
+        'category' => 'product',
+        'priority' => 'medium',
+        'default_limit' => 20,
+        'execution_time' => '2-5분',
+        'frequency' => '하루 2회'
+    ),
+    'product_status' => array(
+        'name' => '📊 상품 상태 동기화',
+        'description' => '쿠팡 상품 승인 상태 확인',
+        'icon' => '📊',
+        'category' => 'product',
+        'priority' => 'medium',
+        'default_limit' => 50,
+        'execution_time' => '1-2분',
+        'frequency' => '하루 2회'
+    ),
+    'stock' => array(
+        'name' => '📦 재고 동기화',
+        'description' => '영카트 재고를 쿠팡에 업데이트',
+        'icon' => '📦',
+        'category' => 'product',
+        'priority' => 'medium',
+        'default_limit' => 50,
+        'execution_time' => '1-3분',
+        'frequency' => '하루 2회'
+    ),
+    'shipping_places' => array(
+        'name' => '🚚 출고지 동기화',
+        'description' => '쿠팡 출고지/반품지 정보 동기화',
+        'icon' => '🚚',
+        'category' => 'system',
+        'priority' => 'low',
+        'default_limit' => 0,
+        'execution_time' => '30초-1분',
+        'frequency' => '하루 1회'
+    ),
+    'category_recommendations' => array(
+        'name' => '🏷️ 카테고리 추천',
+        'description' => '상품 카테고리 자동 추천 처리',
+        'icon' => '🏷️',
+        'category' => 'system',
+        'priority' => 'low',
+        'default_limit' => 20,
+        'execution_time' => '2-5분',
+        'frequency' => '하루 1회'
+    ),
+    'category_cache_cleanup' => array(
+        'name' => '🧹 카테고리 캐시 정리',
+        'description' => '오래된 카테고리 캐시 데이터 삭제',
+        'icon' => '🧹',
+        'category' => 'system',
+        'priority' => 'low',
+        'default_limit' => 0,
+        'execution_time' => '10-30초',
+        'frequency' => '하루 1회'
+    )
+);
+?>
+
+<style>
+    .sync-container {
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: #f8f9fa;
+        min-height: 100vh;
     }
     
-    return array(
-        'success' => true,
-        'data' => array(
-            'products' => $product_stats,
-            'orders' => $order_stats,
-            'cron' => $cron_stats,
-            'recent_errors' => $recent_errors
-        )
-    );
-}
-
-?>
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>쿠팡 연동 관리 (개선됨)</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
-        
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-        .header { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .header h1 { color: #2c3e50; margin-bottom: 10px; }
-        .header .subtitle { color: #7f8c8d; }
-        .version-badge { display: inline-block; background: #3498db; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; margin-left: 10px; }
-        
-        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .card h2 { color: #2c3e50; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #3498db; }
-        
-        .button-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .btn { display: inline-block; padding: 12px 20px; background: #3498db; color: white; text-decoration: none; border-radius: 5px; border: none; cursor: pointer; font-size: 14px; transition: all 0.3s; text-align: center; position: relative; }
-        .btn:hover { background: #2980b9; transform: translateY(-2px); }
-        .btn.btn-success { background: #27ae60; }
-        .btn.btn-success:hover { background: #229954; }
-        .btn.btn-warning { background: #f39c12; }
-        .btn.btn-warning:hover { background: #e67e22; }
-        .btn.btn-danger { background: #e74c3c; }
-        .btn.btn-danger:hover { background: #c0392b; }
-        .btn:disabled { background: #95a5a6; cursor: not-allowed; transform: none; }
-        
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; }
-        .stat-card h3 { margin-bottom: 10px; font-size: 18px; }
-        .stat-card .number { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
-        .stat-card .label { opacity: 0.9; font-size: 14px; }
-        
-        .table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        .table th { background: #f8f9fa; font-weight: 600; color: #2c3e50; }
-        .table tr:hover { background: #f8f9fa; }
-        
-        .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-        .status.success { background: #d4edda; color: #155724; }
-        .status.error { background: #f8d7da; color: #721c24; }
-        .status.warning { background: #fff3cd; color: #856404; }
-        .status.info { background: #d1ecf1; color: #0c5460; }
-        
-        .log-container { max-height: 300px; overflow-y: auto; background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 5px; font-family: 'Courier New', monospace; font-size: 13px; }
-        .log-container .log-line { margin-bottom: 5px; }
-        .log-container .log-success { color: #27ae60; }
-        .log-container .log-error { color: #e74c3c; }
-        .log-container .log-warning { color: #f39c12; }
-        
-        .spinner { display: none; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 10px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        .alert { padding: 15px; margin-bottom: 20px; border: 1px solid transparent; border-radius: 4px; }
-        .alert.alert-success { color: #155724; background-color: #d4edda; border-color: #c3e6cb; }
-        .alert.alert-danger { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
-        .alert.alert-warning { color: #856404; background-color: #fff3cd; border-color: #ffeaa7; }
-        .alert.alert-info { color: #0c5460; background-color: #d1ecf1; border-color: #bee5eb; }
-        
-        .sync-result { margin-top: 15px; padding: 10px; border-radius: 4px; }
-        .sync-result.success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
-        .sync-result.error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
-        
-        .stats-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 12px; }
-        .stats-detail div { background: rgba(255,255,255,0.2); padding: 8px; border-radius: 4px; }
-        
-        @media (max-width: 768px) {
-            .container { padding: 10px; }
-            .button-grid { grid-template-columns: 1fr; }
-            .stats-grid { grid-template-columns: 1fr; }
-            .stats-detail { grid-template-columns: 1fr; }
+    .sync-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+    
+    .sync-header h1 {
+        margin: 0;
+        font-size: 2.5em;
+        font-weight: 300;
+    }
+    
+    .sync-header .subtitle {
+        margin-top: 10px;
+        opacity: 0.9;
+        font-size: 1.1em;
+    }
+    
+    .control-panel {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        margin-bottom: 30px;
+    }
+    
+    .batch-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .batch-button {
+        background: linear-gradient(135deg, #28a745, #20c997);
+        color: white;
+        border: none;
+        padding: 15px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.2s;
+        text-align: center;
+    }
+    
+    .batch-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+    }
+    
+    .batch-button:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+    
+    .batch-button.danger {
+        background: linear-gradient(135deg, #dc3545, #c82333);
+    }
+    
+    .batch-button.danger:hover {
+        box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+    }
+    
+    .cron-jobs-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    
+    .cron-job-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        transition: transform 0.2s, box-shadow 0.2s;
+        border-left: 4px solid #dee2e6;
+    }
+    
+    .cron-job-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+    
+    .cron-job-card.priority-high {
+        border-left-color: #dc3545;
+    }
+    
+    .cron-job-card.priority-medium {
+        border-left-color: #ffc107;
+    }
+    
+    .cron-job-card.priority-low {
+        border-left-color: #28a745;
+    }
+    
+    .cron-job-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    
+    .cron-job-title {
+        font-size: 1.1em;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 0;
+    }
+    
+    .cron-job-status {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75em;
+        font-weight: 500;
+    }
+    
+    .cron-job-status.success {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .cron-job-status.error {
+        background: #f8d7da;
+        color: #721c24;
+    }
+    
+    .cron-job-status.warning {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .cron-job-status.unknown {
+        background: #e2e3e5;
+        color: #6c757d;
+    }
+    
+    .cron-job-description {
+        color: #6c757d;
+        font-size: 0.9em;
+        margin-bottom: 15px;
+    }
+    
+    .cron-job-meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        font-size: 0.8em;
+        color: #6c757d;
+        margin-bottom: 15px;
+    }
+    
+    .cron-job-controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+    
+    .limit-input {
+        width: 60px;
+        padding: 5px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 0.8em;
+    }
+    
+    .run-button {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        border: none;
+        padding: 8px 15px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85em;
+        font-weight: 500;
+        transition: all 0.2s;
+        flex-grow: 1;
+    }
+    
+    .run-button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    .run-button:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+    
+    .logs-section {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 30px;
+    }
+    
+    .card {
+        background: white;
+        border-radius: 12px;
+        padding: 25px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+    }
+    
+    .card h3 {
+        margin-top: 0;
+        color: #2c3e50;
+        border-bottom: 2px solid #f8f9fa;
+        padding-bottom: 15px;
+    }
+    
+    .log-entry {
+        padding: 12px;
+        margin-bottom: 8px;
+        border-radius: 6px;
+        border-left: 4px solid #dee2e6;
+        background: #f8f9fa;
+        font-size: 0.9em;
+    }
+    
+    .log-entry.success {
+        border-left-color: #28a745;
+        background: #d4edda;
+    }
+    
+    .log-entry.error {
+        border-left-color: #dc3545;
+        background: #f8d7da;
+    }
+    
+    .log-entry.warning {
+        border-left-color: #ffc107;
+        background: #fff3cd;
+    }
+    
+    .log-time {
+        font-size: 0.8em;
+        color: #6c757d;
+        float: right;
+    }
+    
+    .log-details {
+        margin-top: 5px;
+        font-size: 0.85em;
+        color: #495057;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+    
+    .stat-item {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+    }
+    
+    .stat-value {
+        font-size: 1.5em;
+        font-weight: 700;
+        color: #667eea;
+        margin-bottom: 5px;
+    }
+    
+    .stat-label {
+        color: #6c757d;
+        font-size: 0.85em;
+    }
+    
+    .progress-bar {
+        background: #e9ecef;
+        height: 6px;
+        border-radius: 3px;
+        margin: 15px 0;
+        overflow: hidden;
+    }
+    
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        transition: width 0.3s ease;
+        width: 0%;
+    }
+    
+    .alert {
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border: 1px solid transparent;
+    }
+    
+    .alert-danger {
+        color: #721c24;
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
+    }
+    
+    .alert-success {
+        color: #155724;
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+    }
+    
+    .alert-info {
+        color: #0c5460;
+        background-color: #d1ecf1;
+        border-color: #bee5eb;
+    }
+    
+    .execution-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .execution-modal.show {
+        display: flex;
+    }
+    
+    .modal-content {
+        background: white;
+        padding: 30px;
+        border-radius: 12px;
+        max-width: 500px;
+        width: 90%;
+        text-align: center;
+    }
+    
+    .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    @media (max-width: 768px) {
+        .cron-jobs-grid {
+            grid-template-columns: 1fr;
         }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚀 쿠팡 연동 관리 대시보드 <span class="version-badge">v2.0 개선됨</span></h1>
-            <div class="subtitle">통합 API 클래스 기반 실시간 동기화 관리</div>
-        </div>
         
-        <!-- API 설정 상태 확인 -->
-        <div class="card">
-            <h2>⚙️ 시스템 상태</h2>
-            <div id="config-status">
-                <?php
-                $config_check = validate_coupang_config();
-                if ($config_check['valid']) {
-                    echo '<div class="alert alert-success">✅ API 설정이 완료되었습니다. (통합 API 클래스 사용)</div>';
-                } else {
-                    echo '<div class="alert alert-danger">❌ API 설정 오류: ' . implode('<br>', $config_check['errors']) . '</div>';
-                }
-                ?>
-            </div>
-        </div>
+        .logs-section {
+            grid-template-columns: 1fr;
+        }
         
-        <!-- 수동 동기화 버튼들 -->
-        <div class="card">
-            <h2>🔄 수동 동기화 (개선된 API)</h2>
-            <div class="button-grid">
-                <button class="btn btn-success" onclick="executeSync('sync_orders')">
-                    📋 주문 동기화 <span class="spinner" id="spinner-orders"></span>
-                </button>
-                <button class="btn btn-warning" onclick="executeSync('sync_cancelled')">
-                    ❌ 취소 주문 동기화 <span class="spinner" id="spinner-cancelled"></span>
-                </button>
-                <button class="btn btn-success" onclick="executeSync('sync_products')">
-                    📦 상품 동기화 <span class="spinner" id="spinner-products"></span>
-                </button>
-                <button class="btn btn-warning" onclick="executeSync('sync_stock')">
-                    📊 재고/가격 동기화 <span class="spinner" id="spinner-stock"></span>
-                </button>
-                <button class="btn btn-warning" onclick="executeSync('sync_order_status')">
-                    🔄 주문 상태 동기화 <span class="spinner" id="spinner-order_status"></span>
-                </button>
-                <button class="btn btn-warning" onclick="executeSync('sync_product_status')">
-                    🏪 상품 상태 동기화 <span class="spinner" id="spinner-product_status"></span>
-                </button>
-                <button class="btn" onclick="executeSync('test_api')">
-                    🔍 API 연결 테스트 <span class="spinner" id="spinner-test"></span>
-                </button>
-                <button class="btn btn-info" onclick="refreshStats()">
-                    📈 통계 새로고침 <span class="spinner" id="spinner-stats"></span>
-                </button>
-            </div>
-            <div id="sync-result"></div>
-        </div>
-        
-        <!-- 동기화 현황 통계 -->
-        <div class="card">
-            <h2>📊 동기화 현황</h2>
-            <div class="stats-grid" id="stats-container">
-                <!-- JavaScript로 동적 로드 -->
-            </div>
-        </div>
-        
-        <!-- 상세 현황 테이블 -->
-        <div class="card">
-            <h2>📋 상세 현황</h2>
-            
-            <h3>상품 동기화 현황</h3>
-            <table class="table" id="product-status-table">
-                <thead>
-                    <tr>
-                        <th>항목</th>
-                        <th>전체</th>
-                        <th>활성</th>
-                        <th>비활성</th>
-                        <th>오류</th>
-                    </tr>
-                </thead>
-                <tbody id="product-stats-body">
-                    <!-- JavaScript로 동적 로드 -->
-                </tbody>
-            </table>
-            
-            <h3 style="margin-top: 30px;">주문 현황</h3>
-            <table class="table" id="order-status-table">
-                <thead>
-                    <tr>
-                        <th>상태</th>
-                        <th>건수</th>
-                        <th>비율</th>
-                    </tr>
-                </thead>
-                <tbody id="order-stats-body">
-                    <!-- JavaScript로 동적 로드 -->
-                </tbody>
-            </table>
-            
-            <h3 style="margin-top: 30px;">최근 오류 현황</h3>
-            <table class="table" id="error-table">
-                <thead>
-                    <tr>
-                        <th>크론 타입</th>
-                        <th>오류 메시지</th>
-                        <th>발생 시간</th>
-                    </tr>
-                </thead>
-                <tbody id="error-stats-body">
-                    <!-- JavaScript로 동적 로드 -->
-                </tbody>
-            </table>
-        </div>
-        
-        <!-- 크론탭 설정 안내 -->
-        <div class="card">
-            <h2>⏰ 크론탭 설정 (개선된 방식)</h2>
-            <p><strong>새로운 통합 크론 시스템을 사용합니다:</strong></p>
-            <pre style="background:#f8f9fa;padding:15px;border-radius:5px;overflow-x:auto;">
-# 주문 관련 동기화 (매분 실행)
-*/1 * * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/orders.php >> <?= COUPANG_PLUGIN_PATH ?>/logs/orders.log 2>&1
-*/1 * * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/cancelled_orders.php >> <?= COUPANG_PLUGIN_PATH ?>/logs/cancelled.log 2>&1
-*/1 * * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/order_status.php >> <?= COUPANG_PLUGIN_PATH ?>/logs/status.log 2>&1
+        .batch-controls {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
 
-# 상품 관련 동기화 (하루 2번 실행)
-0 9,21 * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/products.php >> <?= COUPANG_PLUGIN_PATH ?>/logs/products.log 2>&1
-15 9,21 * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/product_status.php >> <?= COUPANG_PLUGIN_PATH ?>/logs/product_status.log 2>&1
-30 10,22 * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/stock.php >> <?= COUPANG_PLUGIN_PATH ?>/logs/stock.log 2>&1
-
-# 또는 통합 크론으로 실행:
-*/1 * * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/main_cron.php orders >> <?= COUPANG_PLUGIN_PATH ?>/logs/unified.log 2>&1
-*/1 * * * * /usr/bin/php <?= COUPANG_PLUGIN_PATH ?>/cron/main_cron.php cancelled_orders >> <?= COUPANG_PLUGIN_PATH ?>/logs/unified.log 2>&1
-</pre>
+<div class="sync-container">
+    <div class="sync-header">
+        <h1>🔄 쿠팡 연동 수동 동기화 관리</h1>
+        <div class="subtitle">
+            10개 크론 작업 • 실시간 모니터링 • 배치 실행 • 성과 분석
+        </div>
+    </div>
+    
+    <!-- 시스템 상태 알림 -->
+    <?php if (!$config_status['valid']): ?>
+        <div class="alert alert-danger">
+            <strong>❌ API 설정 오류:</strong>
+            <?php echo implode('<br>', $config_status['errors']); ?>
+        </div>
+    <?php else: ?>
+        <div class="alert alert-success">
+            <strong>✅ 시스템 정상 작동 중</strong> - 모든 크론 작업 실행 준비 완료
+        </div>
+    <?php endif; ?>
+    
+    <!-- 배치 제어 패널 -->
+    <div class="control-panel">
+        <h3>🚀 배치 실행 제어</h3>
+        <div class="batch-controls">
+            <button class="batch-button" onclick="runBatchSync('order')" id="batchOrderBtn">
+                📋 주문 관련 전체 실행
+            </button>
+            <button class="batch-button" onclick="runBatchSync('product')" id="batchProductBtn">
+                🛍️ 상품 관련 전체 실행
+            </button>
+            <button class="batch-button" onclick="runBatchSync('system')" id="batchSystemBtn">
+                ⚙️ 시스템 관련 전체 실행
+            </button>
+            <button class="batch-button" onclick="runBatchSync('all')" id="batchAllBtn">
+                🔥 전체 크론 일괄 실행
+            </button>
+            <button class="batch-button danger" onclick="stopAllCrons()" id="stopAllBtn">
+                🛑 모든 작업 중지
+            </button>
+            <button class="batch-button" onclick="refreshLogs()" id="refreshBtn">
+                🔄 로그 새로고침
+            </button>
         </div>
         
-        <!-- 최근 로그 -->
-        <div class="card">
-            <h2>📝 최근 실행 로그</h2>
+        <div class="progress-bar">
+            <div class="progress-fill" id="batchProgress"></div>
+        </div>
+        <div id="batchStatus" style="text-align: center; margin-top: 10px; font-size: 0.9em; color: #6c757d;"></div>
+    </div>
+    
+    <!-- 크론 작업 카드들 -->
+    <div class="cron-jobs-grid">
+        <?php foreach ($cron_jobs as $cron_type => $job_info): ?>
             <?php
-            $log_files = array(
-                'orders.log' => '주문 동기화',
-                'cancelled.log' => '취소 주문',
-                'products.log' => '상품 동기화',
-                'stock.log' => '재고 동기화'
-            );
+            // 해당 크론의 최근 상태 확인
+            $job_status = 'unknown';
+            $last_run = '-';
+            $success_rate = 0;
             
-            foreach ($log_files as $file => $title) {
-                $log_path = COUPANG_PLUGIN_PATH . '/logs/' . $file;
-                if (file_exists($log_path)) {
-                    echo "<h3>{$title} 로그</h3>";
-                    $log_content = file_get_contents($log_path);
-                    $lines = explode("\n", $log_content);
-                    $recent_lines = array_slice($lines, -10); // 최근 10라인
-                    echo "<div class='log-container'>";
-                    foreach ($recent_lines as $line) {
-                        if (empty($line)) continue;
-                        $class = '';
-                        if (strpos($line, '성공') !== false || strpos($line, 'success') !== false || strpos($line, '완료') !== false) $class = 'log-success';
-                        elseif (strpos($line, '실패') !== false || strpos($line, 'error') !== false || strpos($line, '오류') !== false) $class = 'log-error';
-                        elseif (strpos($line, '경고') !== false || strpos($line, 'warning') !== false) $class = 'log-warning';
-                        echo "<div class='log-line {$class}'>" . htmlspecialchars($line) . "</div>";
+            sql_data_seek($today_stats_result, 0);
+            while ($stat = sql_fetch_array($today_stats_result)) {
+                if ($stat['cron_type'] === $cron_type) {
+                    $success_rate = $stat['total_runs'] > 0 ? ($stat['success_runs'] / $stat['total_runs']) * 100 : 0;
+                    $last_run = date('H:i', strtotime($stat['last_run']));
+                    
+                    if ($success_rate >= 80) {
+                        $job_status = 'success';
+                    } elseif ($success_rate >= 50) {
+                        $job_status = 'warning';
+                    } else {
+                        $job_status = 'error';
                     }
-                    echo "</div>";
-                } else {
-                    echo "<h3>{$title} 로그</h3>";
-                    echo "<div class='log-container'><div class='log-line'>로그 파일이 없습니다.</div></div>";
+                    break;
                 }
             }
             ?>
+            
+            <div class="cron-job-card priority-<?php echo $job_info['priority']; ?>">
+                <div class="cron-job-header">
+                    <h4 class="cron-job-title"><?php echo $job_info['name']; ?></h4>
+                    <span class="cron-job-status <?php echo $job_status; ?>">
+                        <?php
+                        switch($job_status) {
+                            case 'success': echo '✅ 정상'; break;
+                            case 'warning': echo '⚠️ 주의'; break;
+                            case 'error': echo '❌ 오류'; break;
+                            default: echo '❓ 미실행';
+                        }
+                        ?>
+                    </span>
+                </div>
+                
+                <div class="cron-job-description"><?php echo $job_info['description']; ?></div>
+                
+                <div class="cron-job-meta">
+                    <div><strong>실행 주기:</strong> <?php echo $job_info['frequency']; ?></div>
+                    <div><strong>예상 소요:</strong> <?php echo $job_info['execution_time']; ?></div>
+                    <div><strong>마지막 실행:</strong> <?php echo $last_run; ?></div>
+                    <div><strong>성공률:</strong> <?php echo round($success_rate, 1); ?>%</div>
+                </div>
+                
+                <div class="cron-job-controls">
+                    <?php if ($job_info['default_limit'] > 0): ?>
+                        <label style="font-size: 0.8em;">개수:</label>
+                        <input type="number" class="limit-input" 
+                               id="limit-<?php echo $cron_type; ?>" 
+                               value="<?php echo $job_info['default_limit']; ?>" 
+                               min="1" max="200">
+                    <?php endif; ?>
+                    
+                    <button class="run-button" onclick="runSingleCron('<?php echo $cron_type; ?>')" 
+                            id="btn-<?php echo $cron_type; ?>">
+                        <?php echo $job_info['icon']; ?> 실행
+                    </button>
+                </div>
+                
+                <!-- 개별 결과 영역 -->
+                <div class="log-entry" id="result-<?php echo $cron_type; ?>" style="display: none; margin-top: 15px;"></div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+    
+    <div class="logs-section">
+        <!-- 실시간 로그 -->
+        <div class="card">
+            <h3>📋 실시간 실행 로그</h3>
+            
+            <div id="live-logs">
+                <?php if (sql_num_rows($recent_logs_result) > 0): ?>
+                    <?php while ($log = sql_fetch_array($recent_logs_result)): ?>
+                        <?php 
+                        $log_class = '';
+                        switch(strtolower($log['status'])) {
+                            case 'success': $log_class = 'success'; break;
+                            case 'error': $log_class = 'error'; break;
+                            case 'warning': $log_class = 'warning'; break;
+                        }
+                        
+                        $cron_display = isset($cron_jobs[$log['cron_type']]) ? 
+                                       $cron_jobs[$log['cron_type']]['name'] : 
+                                       $log['cron_type'];
+                        ?>
+                        <div class="log-entry <?php echo $log_class; ?>">
+                            <strong><?php echo $cron_display; ?></strong>
+                            <span class="log-time"><?php echo date('H:i:s', strtotime($log['created_date'])); ?></span>
+                            <div class="log-details">
+                                <?php echo htmlspecialchars(mb_substr($log['message'], 0, 100)); ?>
+                                <?php if (strlen($log['message']) > 100): ?>...<?php endif; ?>
+                                <?php if ($log['execution_duration']): ?>
+                                    <br><small>실행시간: <?php echo round($log['execution_duration'], 2); ?>초</small>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    <?php endwhile; ?>
+                <?php else: ?>
+                    <div class="log-entry">
+                        아직 실행된 크론 작업이 없습니다.
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+        
+        <!-- 오늘의 통계 -->
+        <div class="card">
+            <h3>📊 오늘의 실행 통계</h3>
+            
+            <div class="stats-grid">
+                <?php
+                $total_runs = 0;
+                $total_success = 0;
+                $total_errors = 0;
+                
+                sql_data_seek($today_stats_result, 0);
+                while ($stat = sql_fetch_array($today_stats_result)) {
+                    $total_runs += $stat['total_runs'];
+                    $total_success += $stat['success_runs'];
+                    $total_errors += $stat['error_runs'];
+                }
+                ?>
+                
+                <div class="stat-item">
+                    <div class="stat-value"><?php echo $total_runs; ?></div>
+                    <div class="stat-label">총 실행 횟수</div>
+                </div>
+                
+                <div class="stat-item">
+                    <div class="stat-value" style="color: #28a745;"><?php echo $total_success; ?></div>
+                    <div class="stat-label">성공 실행</div>
+                </div>
+                
+                <div class="stat-item">
+                    <div class="stat-value" style="color: #dc3545;"><?php echo $total_errors; ?></div>
+                    <div class="stat-label">실패 실행</div>
+                </div>
+                
+                <div class="stat-item">
+                    <div class="stat-value" style="color: #667eea;">
+                        <?php echo $total_runs > 0 ? round(($total_success / $total_runs) * 100, 1) : 0; ?>%
+                    </div>
+                    <div class="stat-label">전체 성공률</div>
+                </div>
+            </div>
+            
+            <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+            
+            <h4>크론별 상세 통계</h4>
+            <?php 
+            sql_data_seek($today_stats_result, 0);
+            if (sql_num_rows($today_stats_result) > 0):
+            ?>
+                <?php while ($stat = sql_fetch_array($today_stats_result)): ?>
+                    <?php 
+                    $success_rate = $stat['total_runs'] > 0 ? ($stat['success_runs'] / $stat['total_runs']) * 100 : 0;
+                    $cron_display = isset($cron_jobs[$stat['cron_type']]) ? 
+                                   $cron_jobs[$stat['cron_type']]['name'] : 
+                                   $stat['cron_type'];
+                    ?>
+                    <div class="log-entry <?php echo $success_rate >= 80 ? 'success' : ($success_rate >= 50 ? 'warning' : 'error'); ?>">
+                        <strong><?php echo $cron_display; ?></strong>
+                        <span class="log-time"><?php echo round($success_rate, 1); ?>%</span>
+                        <div class="log-details">
+                            실행: <?php echo $stat['total_runs']; ?>회 | 
+                            성공: <?php echo $stat['success_runs']; ?>회 | 
+                            평균: <?php echo $stat['avg_duration'] ? round($stat['avg_duration'], 2) . '초' : 'N/A'; ?>
+                        </div>
+                    </div>
+                <?php endwhile; ?>
+            <?php else: ?>
+                <div class="log-entry">
+                    오늘 실행된 크론 작업이 없습니다.
+                </div>
+            <?php endif; ?>
         </div>
     </div>
+</div>
 
-    <script>
-        // 동기화 실행 함수 (개선됨)
-        function executeSync(action) {
-            const button = event.target;
-            const spinnerKey = action.replace('sync_', '').replace('test_api', 'test');
-            const spinner = document.getElementById('spinner-' + spinnerKey);
-            const resultDiv = document.getElementById('sync-result');
-            
-            // 버튼 비활성화 및 스피너 표시
-            button.disabled = true;
-            if (spinner) spinner.style.display = 'inline-block';
-            
-            // 결과 영역 초기화
-            resultDiv.innerHTML = '<div class="sync-result" style="background:#f0f0f0;color:#666;">동기화 실행 중...</div>';
-            
-            fetch('?action=' + action + '&ajax=1')
-                .then(response => response.json())
-                .then(data => {
-                    const alertClass = data.success ? 'success' : 'error';
-                    let html = `<div class="sync-result ${alertClass}">${data.message}`;
-                    
-                    // 통계 정보 표시
-                    if (data.stats && Object.keys(data.stats).length > 0) {
-                        html += '<div class="stats-detail">';
-                        for (const [key, value] of Object.entries(data.stats)) {
-                            if (key !== 'legacy') {
-                                const label = key === 'total' ? '전체' : 
-                                             key === 'success' ? '성공' :
-                                             key === 'new' ? '신규' :
-                                             key === 'update' ? '업데이트' :
-                                             key === 'skip' ? '스킵' :
-                                             key === 'error' ? '실패' :
-                                             key === 'stock_success' ? '재고성공' :
-                                             key === 'price_success' ? '가격성공' :
-                                             key === 'execution_time' ? '실행시간(초)' : key;
-                                html += `<div><strong>${label}:</strong> ${value}</div>`;
-                            }
-                        }
-                        html += '</div>';
-                    }
-                    
-                    html += '</div>';
-                    
-                    // API 테스트의 경우 추가 정보 표시
-                    if (action === 'test_api' && data.data) {
-                        html += `<pre style="background:#f8f9fa;padding:15px;border-radius:5px;margin-top:10px;overflow-x:auto;max-height:300px;">${JSON.stringify(data.data, null, 2)}</pre>`;
-                    }
-                    
-                    resultDiv.innerHTML = html;
-                    
-                    // 통계 자동 새로고침
-                    if (data.success && action !== 'test_api') {
-                        setTimeout(refreshStats, 1000);
-                    }
-                })
-                .catch(error => {
-                    resultDiv.innerHTML = `<div class="sync-result error">오류: ${error.message}</div>`;
-                })
-                .finally(() => {
-                    // 버튼 활성화 및 스피너 숨김
-                    button.disabled = false;
-                    if (spinner) spinner.style.display = 'none';
-                });
-        }
-        
-        // 통계 새로고침 함수 (개선됨)
-        function refreshStats() {
-            const spinner = document.getElementById('spinner-stats');
-            if (spinner) spinner.style.display = 'inline-block';
-            
-            fetch('?action=get_stats&ajax=1')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        updateStatsDisplay(data.data);
-                    }
-                })
-                .catch(error => {
-                    console.error('통계 로드 오류:', error);
-                })
-                .finally(() => {
-                    if (spinner) spinner.style.display = 'none';
-                });
-        }
-        
-        // 통계 화면 업데이트 (개선됨)
-        function updateStatsDisplay(stats) {
-            // 통계 카드 업데이트
-            const statsContainer = document.getElementById('stats-container');
-            statsContainer.innerHTML = `
-                <div class="stat-card">
-                    <h3>📦 상품</h3>
-                    <div class="number">${stats.products.synced_active || 0}</div>
-                    <div class="label">활성 동기화 / ${stats.products.total_items || 0} 전체</div>
-                    <div class="stats-detail">
-                        <div>비활성: ${stats.products.synced_inactive || 0}</div>
-                        <div>오류: ${stats.products.synced_error || 0}</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <h3>📋 주문</h3>
-                    <div class="number">${stats.orders.total_coupang_orders || 0}</div>
-                    <div class="label">쿠팡 주문</div>
-                    <div class="stats-detail">
-                        <div>처리중: ${(stats.orders.pending_orders || 0) + (stats.orders.preparing_orders || 0)}</div>
-                        <div>완료: ${(stats.orders.completed_orders || 0) + (stats.orders.shipping_orders || 0)}</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <h3>🔄 크론 실행</h3>
-                    <div class="number">${stats.cron.success_count || 0}</div>
-                    <div class="label">24시간 성공 / ${stats.cron.total_executions || 0} 전체</div>
-                    <div class="stats-detail">
-                        <div>오류: ${stats.cron.error_count || 0}</div>
-                        <div>최근: ${stats.cron.last_execution ? new Date(stats.cron.last_execution).toLocaleString() : '없음'}</div>
-                    </div>
-                </div>
-            `;
-            
-            // 상품 현황 테이블 업데이트
-            const productStatsBody = document.getElementById('product-stats-body');
-            productStatsBody.innerHTML = `
-                <tr>
-                    <td>상품</td>
-                    <td>${stats.products.total_items || 0}</td>
-                    <td><span class="status success">${stats.products.synced_active || 0}</span></td>
-                    <td><span class="status warning">${stats.products.synced_inactive || 0}</span></td>
-                    <td><span class="status error">${stats.products.synced_error || 0}</span></td>
-                </tr>
-            `;
-            
-            // 주문 현황 테이블 업데이트
-            const orderStatsBody = document.getElementById('order-stats-body');
-            const totalOrders = stats.orders.total_coupang_orders || 0;
-            orderStatsBody.innerHTML = `
-                <tr>
-                    <td><span class="status info">입금</span></td>
-                    <td>${stats.orders.pending_orders || 0}</td>
-                    <td>${totalOrders > 0 ? Math.round((stats.orders.pending_orders || 0) / totalOrders * 100) : 0}%</td>
-                </tr>
-                <tr>
-                    <td><span class="status warning">준비</span></td>
-                    <td>${stats.orders.preparing_orders || 0}</td>
-                    <td>${totalOrders > 0 ? Math.round((stats.orders.preparing_orders || 0) / totalOrders * 100) : 0}%</td>
-                </tr>
-                <tr>
-                    <td><span class="status success">배송</span></td>
-                    <td>${stats.orders.shipping_orders || 0}</td>
-                    <td>${totalOrders > 0 ? Math.round((stats.orders.shipping_orders || 0) / totalOrders * 100) : 0}%</td>
-                </tr>
-                <tr>
-                    <td><span class="status success">완료</span></td>
-                    <td>${stats.orders.completed_orders || 0}</td>
-                    <td>${totalOrders > 0 ? Math.round((stats.orders.completed_orders || 0) / totalOrders * 100) : 0}%</td>
-                </tr>
-                <tr>
-                    <td><span class="status error">취소</span></td>
-                    <td>${stats.orders.cancelled_orders || 0}</td>
-                    <td>${totalOrders > 0 ? Math.round((stats.orders.cancelled_orders || 0) / totalOrders * 100) : 0}%</td>
-                </tr>
-            `;
-            
-            // 오류 현황 테이블 업데이트
-            const errorStatsBody = document.getElementById('error-stats-body');
-            if (stats.recent_errors && stats.recent_errors.length > 0) {
-                let errorHtml = '';
-                stats.recent_errors.forEach(error => {
-                    errorHtml += `
-                        <tr>
-                            <td><span class="status warning">${error.cron_type}</span></td>
-                            <td>${error.message.length > 100 ? error.message.substring(0, 100) + '...' : error.message}</td>
-                            <td>${new Date(error.execution_time).toLocaleString()}</td>
-                        </tr>
-                    `;
-                });
-                errorStatsBody.innerHTML = errorHtml;
-            } else {
-                errorStatsBody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">최근 오류가 없습니다.</td></tr>';
-            }
-        }
-        
-        // 페이지 로드시 통계 자동 로드
-        document.addEventListener('DOMContentLoaded', function() {
-            refreshStats();
-            
-            // 5분마다 자동 새로고침
-            setInterval(refreshStats, 300000);
+<!-- 실행 모달 -->
+<div class="execution-modal" id="executionModal">
+    <div class="modal-content">
+        <div class="spinner"></div>
+        <h3 id="modalTitle">크론 작업 실행 중...</h3>
+        <p id="modalMessage">잠시만 기다려주세요.</p>
+        <div class="progress-bar">
+            <div class="progress-fill" id="modalProgress"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// 전역 변수
+let batchRunning = false;
+let currentBatch = [];
+let batchIndex = 0;
+
+// 개별 크론 실행
+async function runSingleCron(cronType) {
+    const button = document.getElementById('btn-' + cronType);
+    const resultDiv = document.getElementById('result-' + cronType);
+    const limitInput = document.getElementById('limit-' + cronType);
+    
+    // 버튼 비활성화
+    button.disabled = true;
+    button.textContent = '⏳ 실행 중...';
+    
+    // 결과 영역 초기화
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'log-entry';
+    resultDiv.innerHTML = '실행 중...';
+    
+    // 매개변수 설정
+    const params = {};
+    if (limitInput) {
+        params.limit = parseInt(limitInput.value) || 10;
+    }
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=run_cron&cron_type=' + encodeURIComponent(cronType) + 
+                  '&params=' + encodeURIComponent(JSON.stringify(params))
         });
-    </script>
-</body>
-</html>
+        
+        const data = await response.json();
+        
+        // 결과 표시
+        if (data.success) {
+            resultDiv.className = 'log-entry success';
+            resultDiv.innerHTML = `
+                <strong>✅ 실행 완료</strong>
+                <span class="log-time">${data.execution_time}ms</span>
+                <div class="log-details">
+                    ${formatCronResult(data.result)}
+                </div>
+            `;
+        } else {
+            resultDiv.className = 'log-entry error';
+            resultDiv.innerHTML = `
+                <strong>❌ 실행 실패</strong>
+                <span class="log-time">${data.execution_time}ms</span>
+                <div class="log-details">
+                    오류: ${data.error}
+                </div>
+            `;
+        }
+        
+        // 5초 후 로그 새로고침
+        setTimeout(refreshLogs, 5000);
+        
+    } catch (error) {
+        resultDiv.className = 'log-entry error';
+        resultDiv.innerHTML = `
+            <strong>❌ 네트워크 오류</strong>
+            <div class="log-details">
+                ${error.message}
+            </div>
+        `;
+    } finally {
+        // 버튼 활성화
+        button.disabled = false;
+        const jobInfo = <?php echo json_encode($cron_jobs); ?>[cronType];
+        button.textContent = jobInfo.icon + ' 실행';
+    }
+}
+
+// 크론 결과 포맷팅
+function formatCronResult(result) {
+    if (!result) return '결과 없음';
+    
+    let output = [];
+    
+    if (result.processed !== undefined) {
+        output.push(`처리됨: ${result.processed}개`);
+    }
+    if (result.success_count !== undefined) {
+        output.push(`성공: ${result.success_count}개`);
+    }
+    if (result.error_count !== undefined) {
+        output.push(`실패: ${result.error_count}개`);
+    }
+    if (result.message) {
+        output.push(result.message);
+    }
+    
+    return output.length > 0 ? output.join(' | ') : '실행 완료';
+}
+
+// 배치 실행
+async function runBatchSync(category) {
+    if (batchRunning) return;
+    
+    const jobCategories = {
+        order: ['orders', 'cancelled_orders', 'order_status'],
+        product: ['products', 'product_status', 'stock'],
+        system: ['shipping_places', 'category_recommendations', 'category_cache_cleanup'],
+        all: <?php echo json_encode(array_keys($cron_jobs)); ?>
+    };
+    
+    currentBatch = jobCategories[category] || [];
+    if (currentBatch.length === 0) return;
+    
+    batchRunning = true;
+    batchIndex = 0;
+    
+    // 모든 배치 버튼 비활성화
+    document.querySelectorAll('.batch-button').forEach(btn => {
+        btn.disabled = true;
+    });
+    
+    // 진행 상황 표시
+    const progressBar = document.getElementById('batchProgress');
+    const statusDiv = document.getElementById('batchStatus');
+    
+    statusDiv.textContent = `배치 실행 시작: ${currentBatch.length}개 작업`;
+    
+    let successful = 0;
+    
+    for (let i = 0; i < currentBatch.length; i++) {
+        const cronType = currentBatch[i];
+        
+        statusDiv.textContent = `실행 중: ${cronType} (${i + 1}/${currentBatch.length})`;
+        
+        try {
+            await runSingleCron(cronType);
+            successful++;
+        } catch (error) {
+            console.error('배치 실행 오류:', error);
+        }
+        
+        // 진행률 업데이트
+        const progress = ((i + 1) / currentBatch.length) * 100;
+        progressBar.style.width = progress + '%';
+        
+        // 작업 간 1초 대기
+        if (i < currentBatch.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+    
+    // 완료 상태 표시
+    statusDiv.innerHTML = `
+        <strong>배치 실행 완료!</strong><br>
+        ${currentBatch.length}개 작업 중 ${successful}개 성공
+    `;
+    
+    // 버튼 활성화
+    document.querySelectorAll('.batch-button').forEach(btn => {
+        btn.disabled = false;
+    });
+    
+    batchRunning = false;
+    
+    // 로그 새로고침
+    setTimeout(refreshLogs, 2000);
+}
+
+// 모든 작업 중지
+function stopAllCrons() {
+    if (confirm('실행 중인 모든 크론 작업을 중지하시겠습니까?')) {
+        batchRunning = false;
+        currentBatch = [];
+        
+        // 모든 버튼 활성화
+        document.querySelectorAll('button[disabled]').forEach(btn => {
+            btn.disabled = false;
+        });
+        
+        // 진행 상황 초기화
+        document.getElementById('batchProgress').style.width = '0%';
+        document.getElementById('batchStatus').textContent = '모든 작업이 중지되었습니다.';
+        
+        alert('모든 작업이 중지되었습니다.');
+    }
+}
+
+// 로그 새로고침
+function refreshLogs() {
+    window.location.reload();
+}
+
+// 자동 새로고침 (2분마다)
+setInterval(function() {
+    if (!batchRunning) {
+        refreshLogs();
+    }
+}, 120000);
+</script>
+
+<?php
+include_once(G5_ADMIN_PATH.'/admin.tail.php');
+?>
